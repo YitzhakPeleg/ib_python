@@ -12,7 +12,7 @@ class IBapi(EWrapper, EClient):
 
 # %%
 app = IBapi()
-app.connect('host.docker.internal', 7497, 123)
+app.connect("host.docker.internal", 7497, 123)
 # %%
 app.run()
 # %%
