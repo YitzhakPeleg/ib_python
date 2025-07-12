@@ -16,7 +16,9 @@
                 "GitHub.copilot",
                 "GitHub.copilot-chat",
                 "tamasfe.even-better-toml",
-                "charliermarsh.ruff"
+                "charliermarsh.ruff",
+                "ms-toolsai.jupyter",
+                "ms-toolsai.vscode-jupyter-powertoys"
             ]
         }
     },
