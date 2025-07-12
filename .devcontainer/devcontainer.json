@@ -18,7 +18,8 @@
                 "tamasfe.even-better-toml",
                 "charliermarsh.ruff",
                 "ms-toolsai.jupyter",
-                "ms-toolsai.vscode-jupyter-powertoys"
+                "ms-toolsai.vscode-jupyter-powertoys",
+                "mechatroner.rainbow-csv"
             ]
         }
     },
