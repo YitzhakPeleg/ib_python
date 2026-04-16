@@ -16,15 +16,11 @@ class IBapi(EWrapper, EClient):
             print("The current ask price is: ", price)
 
 
-def run_loop():
-    app.run()
-
-
 app = IBapi()
-app.connect("host.docker.internal", 7497, 58)
+print(app.connect( 7497, 58))
 
-# Start the socket in a thread
-api_thread = threading.Thread(target=run_loop, daemon=True)
+# Start the socket in a daemon thread so that it will automatically close when the main program ends
+api_thread = threading.Thread(target=app.run, daemon=True)
 api_thread.start()
 
 time.sleep(1)  # Sleep interval to allow time for connection to server
