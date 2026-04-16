@@ -17,7 +17,7 @@ class IBapi(EWrapper, EClient):
 
 
 app = IBapi()
-print(app.connect( 7497, 58))
+print(app.connect(host="127.0.0.1", port=4002, clientId=58))
 
 # Start the socket in a daemon thread so that it will automatically close when the main program ends
 api_thread = threading.Thread(target=app.run, daemon=True)

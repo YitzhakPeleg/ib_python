@@ -45,6 +45,8 @@ def main():
         print("Connection failed")
         return
 
+    app.reqMarketDataType(3)
+
     # Start the socket in a daemon thread
     api_thread = threading.Thread(target=app.run, daemon=True)
     api_thread.start()
