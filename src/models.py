@@ -1,9 +1,33 @@
 """Data models for historical data fetching."""
 
-from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PositiveInt
+
+
+class SecurityType(StrEnum):
+    STOCK = "STK"
+    OPTION = "OPT"
+    FUTURE = "FUT"
+
+
+class Exchange(StrEnum):
+    NYSE = "NYSE"
+    NASDAQ = "NASDAQ"
+    ARCA = "ARCA"
+    SMART = "SMART"  # IB API's SMART is equivalent to the exchange.
+
+
+class Currency(StrEnum):
+    USD = "USD"
+    EUR = "EUR"
+    JPY = "JPY"
+
+
+class Duration(BaseModel):
+    unit: Literal["S", "M", "D", "W"]
+    value: PositiveInt
 
 
 class BarFrequency(StrEnum):
@@ -33,15 +57,13 @@ class ContractSpec(BaseModel):
     """Contract specification for historical data requests."""
 
     symbol: str = Field(..., description="Stock ticker symbol (e.g., 'AAPL')")
-    sec_type: str = Field(
-        default="STK", description="Security type (e.g., 'STK', 'FUT', 'OPT')"
+    sec_type: SecurityType = Field(
+        default=SecurityType.STOCK,
+        description="Security type (e.g., 'STK', 'FUT', 'OPT')",
     )
-    exchange: str = Field(
-        default="SMART", description="Exchange (e.g., 'SMART', 'NASDAQ', 'NYSE')"
+    exchange: Exchange = Field(
+        default=Exchange.SMART, description="Exchange (e.g., 'SMART', 'NASDAQ', 'NYSE')"
     )
-    currency: str = Field(default="USD", description="Currency (e.g., 'USD', 'EUR')")
-
-
-# Constants
-DEFAULT_START_DATE = datetime(2020, 1, 1)
-DEFAULT_END_DATE = lambda: datetime.now()  # Use lambda to get current time at call time
+    currency: Currency = Field(
+        default=Currency.USD, description="Currency (e.g., 'USD', 'EUR')"
+    )

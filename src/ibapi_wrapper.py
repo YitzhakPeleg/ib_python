@@ -36,7 +36,8 @@ class IBapi(EWrapper, EClient):
         logger.info(
             f"Historical data request {reqId} completed. Received {len(self.data[reqId])} bars."
         )
-        self.data_ready[reqId].set()  # Signal that data is ready for this reqId
+        self.data_ready[reqId].set()  # Signal that data is ready
+        logger.debug(f"Data for reqId {reqId}: {self.data_ready[reqId].is_set()=} ")
 
     def get_data(self, reqId: int) -> list:
         """Get accumulated data for a specific request ID."""
@@ -44,11 +45,11 @@ class IBapi(EWrapper, EClient):
 
     def wait_for_data(self, reqId: int, timeout: float = 30.0) -> bool:
         """Wait for data to be ready for a specific request ID.
-        
+
         Args:
             reqId: Request ID to wait for
             timeout: Maximum seconds to wait
-            
+
         Returns:
             True if data arrived, False if timeout
         """
