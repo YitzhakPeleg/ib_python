@@ -1,4 +1,3 @@
-
 import threading
 import time
 
@@ -16,17 +15,12 @@ class IBapi(EWrapper, EClient):
         self.data = []  # Initialize variable to store candle
 
     def historicalData(self, reqId, bar):
-        print(bar)
-        logger.info(
-            f'Time: {bar.date} O: {bar.open} H: {bar.high} L: {bar.low} C: {bar.close} V: {bar.volume}')
-        self.data.append([
-            bar.date,
-            bar.open,
-            bar.high,
-            bar.low,
-            bar.close,
-            bar.volume
-        ])
+        # print(bar)
+        # logger.info(
+        #     f"Time: {bar.date} O: {bar.open} H: {bar.high} L: {bar.low} C: {bar.close} V: {bar.volume}"
+        # )
+        self.data.append([bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume])
+        # logger.info(f"{len(self.data)} candles received")
 
 
 def run_loop():
@@ -36,7 +30,7 @@ def run_loop():
 if __name__ == "__main__":
     logger.add("hourly_prices.log", rotation="1 MB", level="INFO")
     app = IBapi()
-    app.connect("host.docker.internal", 7497, 123)
+    app.connect(host="127.0.0.1", port=4002, clientId=123)
 
     # Start the socket in a thread
     api_thread = threading.Thread(target=run_loop, daemon=True)
@@ -46,34 +40,49 @@ if __name__ == "__main__":
     logger.info("Connected to IB API")
     # Create contract object
     contract = Contract()
-    contract.symbol = 'AAPL'
-    contract.secType = 'STK'
-    contract.exchange = 'SMART'
-    contract.currency = 'USD'
+    contract.symbol = "AAPL"
+    contract.secType = "STK"
+    contract.exchange = "SMART"
+    contract.currency = "USD"
 
     app.data = []  # Initialize variable to store candle
-    logger.info("Requesting historical data for AAPL")
+    logger.info(f"Requesting historical data for {contract.symbol}...")
     # Request historical candles
-    app.reqHistoricalData(1, contract, '', '2 D',
-                          '1 hour', 'BID', 0, 2, False, [])
+    app.reqHistoricalData(
+        reqId=1,
+        contract=contract,
+        endDateTime="20260409 23:59:59 UTC",  #  yyyymmdd HH:mm:ss ttt
+        durationStr="5 D",
+        barSizeSetting="1 min",  # 1 min, 5 mins, 1 hour, etc.
+        whatToShow="TRADES",
+        useRTH=1,  # Only request data from regular trading hours
+        formatDate=2,  # epoch time in seconds
+        keepUpToDate=False,
+        chartOptions=[],
+    )
 
     time.sleep(5)  # sleep to allow enough time for data to be returned
 
     # Working with Polars DataFrame
     if app.data:
-        df = pl.DataFrame(app.data, schema=[
-                          'DateTime', 'Open', 'High', 'Low', 'Close', 'Volume'])
+        df = pl.DataFrame(
+            app.data, schema=["DateTime", "Open", "High", "Low", "Close", "Volume"]
+        )
         # Convert DateTime from seconds to milliseconds for polars
         try:
-            df = df.with_columns([
-                (pl.col('DateTime').cast(pl.Int64) * 1000).alias('DateTime')
-            ])
-            df = df.with_columns([
-                pl.col('DateTime').cast(pl.Datetime('ms')).alias('DateTime')
-            ])
+            df = df.with_columns(
+                [(pl.col("DateTime").cast(pl.Int64) * 1000).alias("DateTime")]
+            )
+            df = df.with_columns(
+                [
+                    pl.col("DateTime")
+                    .cast(pl.Datetime(time_unit="ms", time_zone="Asia/Jerusalem"))
+                    .alias("DateTime")
+                ]
+            )
         except Exception as e:
             logger.warning(f"Could not convert DateTime to datetime: {e}")
-        df.write_csv('EURUSD_Hourly.csv')
+        df.write_csv("AAPL_1min.csv")
         print(df)
     else:
         logger.warning("No data received from IB API.")
