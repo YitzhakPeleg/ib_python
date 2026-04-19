@@ -9,9 +9,8 @@ from models import BarFrequency, ContractSpec, Duration
 if __name__ == "__main__":
     logger.add("hourly_prices.log", rotation="1 MB", level="INFO")
 
-    # Create fetcher and connect
+    # Create fetcher (will auto-connect when needed)
     fetcher = HistoricalDataFetcher(host="127.0.0.1", port=4002, client_id=123)
-    fetcher.connect()
 
     try:
         # Define contract
@@ -33,4 +32,5 @@ if __name__ == "__main__":
             logger.warning("No data received")
 
     finally:
-        fetcher.disconnect()
+        if fetcher._connected:
+            fetcher._disconnect()
