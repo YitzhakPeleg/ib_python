@@ -85,11 +85,8 @@ class IBapi(EWrapper, EClient):
     def historicalDataEnd(self, reqId: int, start: str, end: str) -> None:
         """Callback when all historical data has been received."""
         self._ensure_request_tracking(reqId)
-        logger.info(
-            f"Historical data request {reqId} completed. Received {len(self.requests[reqId].data)} bars."
-        )
         self.requests[reqId].ready.set()  # Signal that data is ready
-        logger.debug(f"Data for reqId {reqId}: {self.requests[reqId].ready.is_set()=} ")
+        logger.info(f"Historical data request {reqId} completed.")
 
     def get_data(
         self, reqId: int, format: Literal["polars", "pandas"] = "polars"

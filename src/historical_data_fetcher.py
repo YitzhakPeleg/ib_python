@@ -131,6 +131,7 @@ class HistoricalDataFetcher(IBapi):
         frequency: BarFrequency = BarFrequency.ONE_HOUR,
         regular_trading_hours: bool = True,
         timeout: timedelta | None = None,
+        timezone: Optional[str] = None,
     ) -> pl.DataFrame:
         """Fetch historical market data.
 
@@ -239,7 +240,7 @@ class HistoricalDataFetcher(IBapi):
             df = df.with_columns(
                 [
                     (pl.col("DateTime").cast(pl.Int64) * 1000)
-                    .cast(pl.Datetime(time_unit="ms", time_zone="UTC"))
+                    .cast(pl.Datetime(time_unit="ms", time_zone=timezone or "UTC"))
                     .alias("DateTime")
                 ]
             )
@@ -268,11 +269,12 @@ if __name__ == "__main__":
         df = fetcher.get_historical_data(
             contract=contract,
             # end_date=datetime(2024, 4, 16, 15, 0, 0),
-            duration=timedelta(days=30),
+            duration=timedelta(days=365),
             frequency=freq,
-            timeout=timedelta(minutes=5),
+            timeout=timedelta(minutes=30),
+            timezone="US/Eastern",
         )
     print(df)
-    output_file = f"{contract.symbol}_{freq.value.replace(' ', '_')}.csv"
-    df.write_csv(output_file)
+    output_file = f"{contract.symbol}_{freq.value.replace(' ', '_')}.parquet"
+    df.write_parquet(output_file)
     logger.info(f"Saved historical data to {output_file}")
