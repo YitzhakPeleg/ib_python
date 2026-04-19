@@ -131,3 +131,4 @@ cython_debug/
 
 # Ignore the twsapi_macunix.1030.01 directory
 twsapi_macunix.1030.01/
+*.csv
