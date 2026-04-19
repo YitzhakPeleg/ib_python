@@ -13,6 +13,7 @@ class IBapi(EWrapper, EClient):
     def __init__(self):
         EClient.__init__(self, self)
         self.data = []  # Initialize variable to store candle
+        self.data_ready = threading.Event()  # Signal when data is complete
 
     def historicalData(self, reqId, bar):
         # print(bar)
@@ -21,6 +22,12 @@ class IBapi(EWrapper, EClient):
         # )
         self.data.append([bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume])
         # logger.info(f"{len(self.data)} candles received")
+
+    def historicalDataEnd(self, reqId, start, end):
+        logger.info(
+            f"Historical data request {reqId} completed. Received {len(self.data)} bars."
+        )
+        self.data_ready.set()  # Signal that data is ready
 
 
 def run_loop():
@@ -61,7 +68,10 @@ if __name__ == "__main__":
         chartOptions=[],
     )
 
-    time.sleep(5)  # sleep to allow enough time for data to be returned
+    # Wait for data to be ready instead of hardcoded sleep
+    logger.info("Waiting for historical data...")
+    app.data_ready.wait(timeout=30)  # Wait up to 30 seconds for data
+    logger.info("Historical data received, processing...")
 
     # Working with Polars DataFrame
     if app.data:
