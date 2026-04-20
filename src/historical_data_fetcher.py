@@ -11,6 +11,7 @@ from ibapi.contract import Contract
 from loguru import logger
 from rich.pretty import pretty_repr
 
+from date_converter import add_date_int_column
 from ibapi_wrapper import IBapi
 from models import BarFrequency, ContractSpec
 
@@ -274,6 +275,7 @@ if __name__ == "__main__":
             timeout=timedelta(minutes=30),
             timezone="US/Eastern",
         )
+        df = add_date_int_column(df)
     print(df)
     output_file = f"{contract.symbol}_{freq.value.replace(' ', '_')}.parquet"
     df.write_parquet(output_file)
