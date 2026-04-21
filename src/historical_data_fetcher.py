@@ -263,7 +263,7 @@ class HistoricalDataFetcher(IBapi):
 if __name__ == "__main__":
     # Example usage
     with HistoricalDataFetcher() as fetcher:
-        contract = ContractSpec(symbol="AAPL")
+        contract = ContractSpec(symbol="NVDA")
         freq = BarFrequency.ONE_MIN
         # get_historical_data auto-connects if needed
         df = fetcher.get_historical_data(
