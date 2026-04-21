@@ -12,13 +12,21 @@ def add_date_int_column(df: pl.DataFrame) -> pl.DataFrame:
     Returns:
     - pl.DataFrame with an additional 'date' column (Int64)
     """
-    return df.with_columns(
-        pl.col("DateTime")
-        .str.to_datetime()  # 'to_datetime' handles the T separator and timezone offset automatically
-        .dt.strftime("%Y%m%d")  # Format Date as "YYYYMMDD" string
-        .cast(pl.Int64)  # Cast string to Integer
-        .alias("date")
-    )
+    if df["DateTime"].dtype == pl.String:
+        return df.with_columns(
+            pl.col("DateTime")
+            .str.to_datetime()  # 'to_datetime' handles the T separator and timezone offset automatically
+            .dt.strftime("%Y%m%d")  # Format Date as "YYYYMMDD" string
+            .cast(pl.Int64)  # Cast string to Integer
+            .alias("date")
+        )
+    if df["DateTime"].dtype == pl.Datetime:
+        return df.with_columns(
+            pl.col("DateTime")
+            .dt.strftime("%Y%m%d")  # Format Date as "YYYYMMDD" string
+            .cast(pl.Int64)  # Cast string to Integer
+            .alias("date")
+        )
 
 
 # Example usage:
