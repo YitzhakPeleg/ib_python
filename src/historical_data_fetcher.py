@@ -3,6 +3,7 @@
 import threading
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 
 import polars as pl
@@ -263,7 +264,7 @@ class HistoricalDataFetcher(IBapi):
 if __name__ == "__main__":
     # Example usage
     with HistoricalDataFetcher() as fetcher:
-        contract = ContractSpec(symbol="GOOG")
+        contract = ContractSpec(symbol="AVGO")
         freq = BarFrequency.ONE_MIN
         # get_historical_data auto-connects if needed
         df = fetcher.get_historical_data(
@@ -275,6 +276,9 @@ if __name__ == "__main__":
             timezone="US/Eastern",
         )
     print(df)
-    output_file = f"{contract.symbol}_{freq.value.replace(' ', '_')}.parquet"
+    output_path = Path("/Users/yitzhakpeleg/Projects/ib_python/data")
+    output_file = (
+        output_path / f"{contract.symbol}_{freq.value.replace(' ', '_')}.parquet"
+    )
     df.write_parquet(output_file)
     logger.info(f"Saved historical data to {output_file}")

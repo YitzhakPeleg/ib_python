@@ -13,5 +13,6 @@
         "statusBar.noFolderBackground": "#3C234B",
         "statusBar.noFolderForeground": "#FCFBFD"
     },
-    "cmake.sourceDirectory": "/Users/yitzhakpeleg/Projects/ib_python/IBJts"
+    "cmake.sourceDirectory": "/Users/yitzhakpeleg/Projects/ib_python/IBJts",
+    "python.languageServer": "None"
 }
