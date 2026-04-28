@@ -133,3 +133,7 @@ cython_debug/
 twsapi_macunix.1030.01/
 *.csv
 *.parquet
+
+# Ignore logs and data directories
+logs/
+data/

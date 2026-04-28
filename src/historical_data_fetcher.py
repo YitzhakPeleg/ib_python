@@ -263,12 +263,12 @@ class HistoricalDataFetcher(IBapi):
 if __name__ == "__main__":
     # Example usage
     with HistoricalDataFetcher() as fetcher:
-        contract = ContractSpec(symbol="NVDA")
+        contract = ContractSpec(symbol="GOOG")
         freq = BarFrequency.ONE_MIN
         # get_historical_data auto-connects if needed
         df = fetcher.get_historical_data(
             contract=contract,
-            # end_date=datetime(2024, 4, 16, 15, 0, 0),
+            end_date=datetime(2024, 4, 16, 15, 0, 0),
             duration=timedelta(days=365),
             frequency=freq,
             timeout=timedelta(minutes=30),
