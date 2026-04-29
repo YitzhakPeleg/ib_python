@@ -3,15 +3,12 @@
 import threading
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import TYPE_CHECKING, Dict, Literal, Union
+from typing import Dict
 
 import polars as pl
 from ibapi.client import EClient
 from ibapi.wrapper import EWrapper
 from loguru import logger
-
-if TYPE_CHECKING:
-    import pandas as pd
 
 
 @dataclass
@@ -21,9 +18,7 @@ class Request:
     data: list = field(default_factory=list)
     ready: threading.Event = field(default_factory=threading.Event)
 
-    def export(
-        self, format: Literal["polars", "pandas"] = "polars"
-    ) -> Union[pl.DataFrame, "pd.DataFrame"]:
+    def export(self) -> pl.DataFrame:
         """Export request data as a DataFrame.
 
         Args:
@@ -39,28 +34,11 @@ class Request:
         if not self.data:
             raise ValueError("No data to export")
 
-        if format.lower() == "polars":
-            df = pl.DataFrame(
-                self.data,
-                schema=["DateTime", "Open", "High", "Low", "Close", "Volume"],
-                orient="row",
-            )
-            return df
-        elif format.lower() == "pandas":
-            try:
-                import pandas as pd
-            except ImportError:
-                raise ImportError(
-                    "pandas is required for 'pandas' format. "
-                    "Install with: pip install pandas"
-                )
-            df = pd.DataFrame(
-                self.data,
-                columns=["DateTime", "Open", "High", "Low", "Close", "Volume"],
-            )
-            return df
-        else:
-            raise ValueError(f"Unknown format: {format}. Use 'polars' or 'pandas'")
+        return pl.DataFrame(
+            data=self.data,
+            schema=["DateTime", "Open", "High", "Low", "Close", "Volume"],
+            orient="row",
+        )
 
 
 class IBapi(EWrapper, EClient):
@@ -88,9 +66,7 @@ class IBapi(EWrapper, EClient):
         self.requests[reqId].ready.set()  # Signal that data is ready
         logger.info(f"Historical data request {reqId} completed.")
 
-    def get_data(
-        self, reqId: int, format: Literal["polars", "pandas"] = "polars"
-    ) -> Union[pl.DataFrame, "pd.DataFrame"]:
+    def get_data(self, reqId: int) -> pl.DataFrame:
         """Get accumulated data for a specific request ID and remove it from tracking.
 
         Args:
@@ -107,8 +83,7 @@ class IBapi(EWrapper, EClient):
         if reqId not in self.requests:
             raise ValueError(f"No request found with ID {reqId}")
 
-        request = self.requests[reqId]
-        df = request.export(format=format)
+        df = self.requests[reqId].export()
         self.remove_request(reqId)
         return df
 

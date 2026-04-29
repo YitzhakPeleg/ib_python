@@ -7,12 +7,13 @@ from pathlib import Path
 from typing import Optional
 
 import polars as pl
+from date_converter import add_date_int_column
 from ibapi.client import EClient
 from ibapi.contract import Contract
+from ibapi_wrapper import IBapi
 from loguru import logger
 from rich.pretty import pretty_repr
 
-from ibapi_wrapper import IBapi
 from models import BarFrequency, ContractSpec
 
 DEFAULT_START_DATE = datetime(year=2020, month=1, day=1, hour=0, minute=0, second=0)
@@ -261,24 +262,50 @@ class HistoricalDataFetcher(IBapi):
         self.close()
 
 
-if __name__ == "__main__":
-    # Example usage
+def get_data(
+    symbol: str,
+    end_date: datetime,
+    frequency: BarFrequency = BarFrequency.ONE_MIN,
+    duration: timedelta = timedelta(days=30),
+):
+    """
+    Get historical data from Alpha Vantage.
+    Parameters:
+    - symbol: stock symbol
+    - end_date: end date of the data
+    - interval: interval of the data
+    - duration: duration of the data
+    Returns:
+    - historical data from Alpha Vantage
+    """
+    # Get historical data from Alpha Vantage
+    # ...
+    contract = ContractSpec(symbol=symbol)
+    freq = BarFrequency.ONE_MIN
     with HistoricalDataFetcher() as fetcher:
-        contract = ContractSpec(symbol="AVGO")
-        freq = BarFrequency.ONE_MIN
         # get_historical_data auto-connects if needed
         df = fetcher.get_historical_data(
             contract=contract,
-            end_date=datetime(2024, 4, 16, 15, 0, 0),
+            end_date=datetime(2024, 12, 31, 23, 59, 59),
             duration=timedelta(days=365),
             frequency=freq,
             timeout=timedelta(minutes=30),
             timezone="US/Eastern",
         )
     print(df)
+    df = add_date_int_column(df)
     output_path = Path("/Users/yitzhakpeleg/Projects/ib_python/data")
     output_file = (
         output_path / f"{contract.symbol}_{freq.value.replace(' ', '_')}.parquet"
     )
     df.write_parquet(output_file)
     logger.info(f"Saved historical data to {output_file}")
+
+
+if __name__ == "__main__":
+    get_data(
+        symbol="AAPL",
+        end_date=datetime(2024, 12, 31, 23, 59, 59),
+        frequency=BarFrequency.FIVE_MIN,
+        duration=timedelta(days=1),
+    )
