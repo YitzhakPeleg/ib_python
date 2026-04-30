@@ -5,12 +5,17 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "pandas>=2.3.1",
-    "plotly>=6.2.0",
+    "plotly[express]>=6.2.0",
     "polars>=1.31.0",
-    "ibapi @ file:///workspaces/ib_python/ibapi-10.30.1-py3-none-any.whl",
+    "ibapi @ file:///Users/yitzhakpeleg/Projects/ib_python/ibapi-10.45.1-py3-none-any.whl",
     "jupyterlab>=4.4.4",
     "ruff>=0.12.3",
     "loguru>=0.7.3",
     "rich>=14.0.0",
+    "pydantic-settings>=2.0.0",
+    "tqdm>=4.66.0",
+    "scikit-learn>=1.8.0",
+    "torch>=2.11.0",
+    "torchvision>=0.26.0",
+    "torchaudio>=2.11.0",
 ]

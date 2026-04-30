@@ -3,6 +3,16 @@
         "editorRuler.foreground": "#8940ff",
         "activityBar.background": "#3C234B",
         "titleBar.activeBackground": "#553169",
-        "titleBar.activeForeground": "#FCFBFD"
-    }
+        "titleBar.activeForeground": "#FCFBFD",
+        "titleBar.inactiveBackground": "#3C234B",
+        "titleBar.inactiveForeground": "#FCFBFD",
+        "statusBar.background": "#3C234B",
+        "statusBar.foreground": "#FCFBFD",
+        "statusBar.debuggingBackground": "#3C234B",
+        "statusBar.debuggingForeground": "#FCFBFD",
+        "statusBar.noFolderBackground": "#3C234B",
+        "statusBar.noFolderForeground": "#FCFBFD"
+    },
+    "cmake.sourceDirectory": "/Users/yitzhakpeleg/Projects/ib_python/IBJts",
+    "python.languageServer": "None"
 }
