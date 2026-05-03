@@ -5,7 +5,7 @@ from typing import Literal
 import polars as pl
 from loguru import logger
 
-from .models import SignalResult, SignalType, TradeSetup
+from models import SignalResult, SignalType, TradeSetup
 
 
 def backtest_trade_setups(

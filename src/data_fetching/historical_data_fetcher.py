@@ -12,9 +12,9 @@ from ibapi.contract import Contract
 from loguru import logger
 from rich.pretty import pretty_repr
 
-from ..algo.models import BarFrequency, ContractSpec
-from .date_converter import add_date_int_column
-from .ibapi_wrapper import IBapi
+from data_fetching.date_converter import add_date_int_column
+from data_fetching.ibapi_wrapper import IBapi
+from models import BarFrequency, ContractSpec
 
 DEFAULT_START_DATE = datetime(year=2020, month=1, day=1, hour=0, minute=0, second=0)
 
