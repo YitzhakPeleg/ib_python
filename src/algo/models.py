@@ -1,6 +1,7 @@
-"""Data models for historical data fetching."""
+"""Data models for historical data fetching and trading signals."""
 
-from enum import StrEnum
+from dataclasses import dataclass
+from enum import IntEnum, StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field, PositiveInt
@@ -67,3 +68,65 @@ class ContractSpec(BaseModel):
     currency: Currency = Field(
         default=Currency.USD, description="Currency (e.g., 'USD', 'EUR')"
     )
+
+
+# ============================================================================
+# Trading Signal Models
+# ============================================================================
+
+
+class SignalType(IntEnum):
+    """Trading signal types with numeric values for ML models."""
+
+    SELL = -1
+    HOLD = 0
+    BUY = 1
+
+
+@dataclass
+class TradeSetup:
+    """Complete trade setup with entry, stop-loss, and take-profit levels."""
+
+    date: int  # YYYYMMDD format
+    signal: SignalType
+    entry_price: float
+    stop_loss: float
+    take_profit: float
+    confidence: float  # Model probability/confidence score
+    risk_reward_ratio: float = 2.0  # Default 2:1 ratio
+
+    @property
+    def risk_amount(self) -> float:
+        """Calculate risk amount (distance from entry to stop-loss)."""
+        return abs(self.entry_price - self.stop_loss)
+
+    @property
+    def reward_amount(self) -> float:
+        """Calculate reward amount (distance from entry to take-profit)."""
+        return abs(self.take_profit - self.entry_price)
+
+    def __repr__(self) -> str:
+        return (
+            f"TradeSetup(date={self.date}, signal={self.signal.name}, "
+            f"entry={self.entry_price:.2f}, sl={self.stop_loss:.2f}, "
+            f"tp={self.take_profit:.2f}, confidence={self.confidence:.2%})"
+        )
+
+
+@dataclass
+class SignalResult:
+    """Result of a completed trade for backtesting."""
+
+    setup: TradeSetup
+    outcome: Literal["win", "loss", "breakeven", "open"]
+    exit_price: float
+    pnl: float  # Profit/Loss in dollars
+    pnl_percent: float  # Profit/Loss as percentage
+    bars_held: int  # Number of bars from entry to exit
+
+    @property
+    def r_multiple(self) -> float:
+        """Calculate R-multiple (PnL / Risk)."""
+        if self.setup.risk_amount == 0:
+            return 0.0
+        return self.pnl / self.setup.risk_amount

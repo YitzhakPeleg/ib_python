@@ -15,8 +15,8 @@ from loguru import logger
 from sklearn.metrics import classification_report
 from sklearn.tree import DecisionTreeClassifier, export_text
 
-from bollinger_bands import calculate_bollinger_bands
-from date_converter import add_date_int_column
+from ..data_fetching.date_converter import add_date_int_column
+from .bollinger_bands import calculate_bollinger_bands
 
 pio.renderers.default = "browser"
 
@@ -299,12 +299,13 @@ def print_tree_rules(clf, feature_names: list[str]):
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
+from torch.utils.data import DataLoader, TensorDataset
 
 # Check if Apple Silicon GPU (MPS) is available
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 logger.info(f"Using device: {device}")
+
 
 # --- 1. THE MODEL ARCHITECTURE ---
 class TradingNN(nn.Module):
@@ -315,16 +316,15 @@ class TradingNN(nn.Module):
             nn.BatchNorm1d(64),
             nn.ReLU(),
             nn.Dropout(0.2),
-            
             nn.Linear(64, 32),
             nn.BatchNorm1d(32),
             nn.ReLU(),
-            
-            nn.Linear(32, num_classes) # 3 outputs: Neutral, Long, Short
+            nn.Linear(32, num_classes),  # 3 outputs: Neutral, Long, Short
         )
-        
+
     def forward(self, x):
         return self.network(x)
+
 
 # --- 2. THE TRAINING FUNCTION ---
 def train_deep_learning(X_train, y_train, X_test, y_test):
@@ -340,11 +340,13 @@ def train_deep_learning(X_train, y_train, X_test, y_test):
     y_test_t = torch.LongTensor(y_test).to(device)
 
     # Create DataLoader
-    train_loader = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=16, shuffle=True)
+    train_loader = DataLoader(
+        TensorDataset(X_train_t, y_train_t), batch_size=16, shuffle=True
+    )
 
     # Initialize Model
     model = TradingNN(X_train.shape[1], 3).to(device)
-    criterion = nn.CrossEntropyLoss() # Handles class imbalance well
+    criterion = nn.CrossEntropyLoss()  # Handles class imbalance well
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
     # Training Loop
@@ -356,17 +358,18 @@ def train_deep_learning(X_train, y_train, X_test, y_test):
             loss = criterion(outputs, batch_y)
             loss.backward()
             optimizer.step()
-        
+
         if (epoch + 1) % 10 == 0:
-            logger.info(f"Epoch [{epoch+1}/50], Loss: {loss.item():.4f}")
+            logger.info(f"Epoch [{epoch + 1}/50], Loss: {loss.item():.4f}")
 
     # Evaluation
     model.eval()
     with torch.no_grad():
         test_outputs = model(X_test_t)
         _, predicted = torch.max(test_outputs, 1)
-        
+
     return predicted.cpu().numpy(), y_test
+
 
 # --- 3. MAIN_2 PIPELINE ---
 def main_2(ticker: str = "AAPL"):
@@ -374,15 +377,15 @@ def main_2(ticker: str = "AAPL"):
     # (Assuming functions from your train_algo.py are in scope)
     df = pl.read_csv(f"data/{ticker}_1m.csv")
     df = add_date_int_column(df)
-    df = calculate_bollinger_bands(df) # Ensure this adds bb_upper/lower
-    
+    df = calculate_bollinger_bands(df)  # Ensure this adds bb_upper/lower
+
     features, labels = prepare_ml_dataset(df)
-    
+
     # Merge and split
     data = features.join(labels, on="date").drop("date")
     X = data.drop("label").to_numpy()
     y = data.select("label").to_numpy().flatten()
-    
+
     split_idx = int(len(X) * 0.8)
     X_train, X_test = X[:split_idx], X[split_idx:]
     y_train, y_test = y[:split_idx], y[split_idx:]
