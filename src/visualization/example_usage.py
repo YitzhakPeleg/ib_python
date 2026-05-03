@@ -5,6 +5,7 @@ from loguru import logger
 
 from algo.bollinger_bands import calculate_bollinger_bands
 from data_fetching.date_converter import add_date_int_column
+from models import BarFrequency, get_file
 from visualization import plot_bars
 
 # Configure logger
@@ -17,9 +18,8 @@ def example_1_basic_chart():
 
     # Load data
     ticker = "AAPL"
-    file = f"{ticker}_1_min.parquet"
-    path = f"data/{file}"
-    df = pl.read_parquet(path)
+    freqency = BarFrequency.ONE_MIN
+    df = pl.read_parquet(get_file(ticker, freqency))
 
     # Add date column for filtering
     df = add_date_int_column(df)
@@ -28,11 +28,15 @@ def example_1_basic_chart():
     df = calculate_bollinger_bands(df, window=20, stds=2.0)
 
     # Create chart
-    plot_bars(
+    fig = plot_bars(
         df,
         title=f"{ticker} - 1 Minute Bars with Bollinger Bands",
         height=900,
+        return_fig=True,
+        show_fig=False,
     )
+    if fig:
+        fig.show(renderer="browser")
 
 
 def example_2_single_day():
@@ -195,7 +199,7 @@ if __name__ == "__main__":
     # Run examples
     # Uncomment the examples you want to run
 
-    # example_1_basic_chart()
+    example_1_basic_chart()
     # example_2_single_day()
     # example_3_date_range()
     # example_4_no_volume()
@@ -205,9 +209,9 @@ if __name__ == "__main__":
     # example_8_save_to_file()
 
     # Default: run basic example
-    logger.info("Running default example (basic chart)")
-    logger.info("Uncomment other examples in the script to try them")
-    example_2_single_day()
+    # logger.info("Running default example (basic chart)")
+    # logger.info("Uncomment other examples in the script to try them")
+    # example_2_single_day()
 
 
 # Made with Bob
