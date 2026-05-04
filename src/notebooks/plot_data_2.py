@@ -1,8 +1,12 @@
 # %%
+
+
 import polars as pl
 
+from algo import daily_range_avg
 from models import get_file
 from models.models import BarFrequency
+from models.paths import DATA_PATH
 
 # %%
 ticker = "SPY"
@@ -10,6 +14,8 @@ frequency = BarFrequency.ONE_MIN
 print(f"{ticker = }")
 df = pl.read_parquet(get_file(ticker, frequency))
 print(df)
+df = daily_range_avg(df, 14)
+df.tail()
 
 # %%
 
@@ -46,6 +52,7 @@ high_breakout_rows = (
     .select(
         "date",
         "Volume",
+        "avg_daily_range",
         "first_bar_high",
         pl.col("DateTime").alias("time_at_breakout_high"),
     )
@@ -100,7 +107,6 @@ high_results = high_breakout_rows.join(day_high_rows, on="date")
 low_results = low_breakout_rows.join(day_low_rows, on="date")
 final_results = high_results.join(low_results, on="date").join(first_bar, on="date")
 final_results
-# %%
 # %%
 final_results = final_results.with_columns(
     time_until_high_breakout=pl.col("time_at_breakout_high") - pl.col("first_bar_time"),
@@ -207,8 +213,6 @@ counts = (
 print(counts)
 
 # %%
-
-# %%
 results.filter(
     (pl.col("extreme_size") < 0) & (pl.col("event_order").str.starts_with("BH"))
 )
@@ -249,4 +253,7 @@ print(dates_detailed)
 # %%
 dates_detailed.filter(pl.col("event_order") == "BH -> BL -> DL -> DH").tail()
 
+# %%
+cols_to_drop = [c for c in results.columns if "until" in c]
+results.drop(*cols_to_drop).write_csv((DATA_PATH / f"{ticker}_results.csv"))
 # %%
