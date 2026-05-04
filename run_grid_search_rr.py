@@ -21,7 +21,7 @@ from src.models import BarFrequency, get_file
 def run_grid_search(
     df: pl.DataFrame,
     rr_start: float = 0.5,
-    rr_end: float = 2.0,
+    rr_end: float = 4.0,
     rr_step: float = 0.1,
 ) -> pl.DataFrame:
     """
@@ -135,7 +135,7 @@ def main():
 
     # Run grid search
     logger.info("\nStarting grid search...")
-    results_df = run_grid_search(df, rr_start=0.5, rr_end=2.0, rr_step=0.1)
+    results_df = run_grid_search(df, rr_start=0.5, rr_end=4.0, rr_step=0.1)
 
     # Sort by total PnL
     results_df = results_df.sort("total_pnl", descending=True)
@@ -198,7 +198,7 @@ def main():
         f.write(f"Ticker: {ticker}\n")
         f.write(f"Frequency: {frequency}\n")
         f.write(f"Trading Days: {len(unique_dates)}\n")
-        f.write("Risk-Reward Ratios Tested: 0.5R to 2.0R (step 0.1)\n\n")
+        f.write("Risk-Reward Ratios Tested: 0.5R to 4.0R (step 0.1)\n\n")
 
         f.write("BEST PARAMETERS\n")
         f.write("-" * 80 + "\n")
