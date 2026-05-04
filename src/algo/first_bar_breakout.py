@@ -72,6 +72,7 @@ class FirstBarBreakoutStrategy:
         first_bar_time: time = time(9, 30),
         market_open: time = time(9, 30),
         market_close: time = time(16, 0),
+        risk_reward_ratio: float = 1.0,
     ):
         """
         Initialize the strategy.
@@ -80,10 +81,13 @@ class FirstBarBreakoutStrategy:
             first_bar_time: Time of the first bar (default: 9:30 AM)
             market_open: Market open time (default: 9:30 AM)
             market_close: Market close time (default: 4:00 PM)
+            risk_reward_ratio: Risk-reward ratio for take profit (default: 1.0)
+                              TP = entry ± (risk_reward_ratio * first_bar_range)
         """
         self.first_bar_time = first_bar_time
         self.market_open = market_open
         self.market_close = market_close
+        self.risk_reward_ratio = risk_reward_ratio
 
     def identify_first_bars(self, df: pl.DataFrame) -> pl.DataFrame:
         """
@@ -253,6 +257,7 @@ class FirstBarBreakoutStrategy:
         """
         logger.info("=" * 80)
         logger.info("FIRST BAR BREAKOUT STRATEGY - BACKTEST")
+        logger.info(f"Risk-Reward Ratio: {self.risk_reward_ratio:.1f}R")
         logger.info("=" * 80)
 
         # Ensure we have date column
@@ -285,10 +290,10 @@ class FirstBarBreakoutStrategy:
             # Set stop-loss and take-profit based on direction
             if direction == "long":
                 stop_loss = first_bar_low
-                take_profit = entry_price + first_bar_range
+                take_profit = entry_price + (self.risk_reward_ratio * first_bar_range)
             else:  # short
                 stop_loss = first_bar_high
-                take_profit = entry_price - first_bar_range
+                take_profit = entry_price - (self.risk_reward_ratio * first_bar_range)
 
             # Execute trade
             exit_time, exit_price, exit_reason, bars_held = self.execute_trade(
