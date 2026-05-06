@@ -32,9 +32,17 @@ class TradeResult:
 
     # First bar info
     first_bar_time: str  # DateTime of first bar
+    first_bar_open: float  # First bar open price
     first_bar_high: float
     first_bar_low: float
+    first_bar_close: float  # First bar close price
     first_bar_range: float
+    first_bar_direction: Literal["green", "red"]  # Green if close > open, red otherwise
+
+    # Gap info
+    prev_day_close: float  # Previous day's closing price
+    gap: float  # Gap = first_bar_open - prev_day_close
+    gap_percent: float  # Gap as percentage of prev_day_close
 
     # Entry details
     breakout_time: str  # DateTime when breakout occurred
@@ -105,11 +113,24 @@ class FirstBarBreakoutDRAStrategy:
             df: DataFrame with OHLC data including DateTime column
 
         Returns:
-            DataFrame with first bar high/low for each date
+            DataFrame with first bar OHLC, range, and previous day close
         """
         # Ensure we have date column
         if "date" not in df.columns:
             df = df.with_columns(pl.col("DateTime").dt.date().alias("date"))
+
+        # Get previous day's close for each date
+        # Group by date and get the last close of each day
+        daily_closes = (
+            df.group_by("date")
+            .agg(pl.col("Close").last().alias("day_close"))
+            .sort("date")
+        )
+
+        # Shift to get previous day's close
+        daily_closes = daily_closes.with_columns(
+            pl.col("day_close").shift(1).alias("prev_day_close")
+        )
 
         # Filter to first bar time (9:30 AM)
         first_bars = df.filter(
@@ -117,17 +138,22 @@ class FirstBarBreakoutDRAStrategy:
             == pl.time(self.first_bar_time.hour, self.first_bar_time.minute)
         )
 
-        # Get first bar high, low, and range for each date
+        # Get first bar OHLC and range for each date
         first_bar_stats = first_bars.select(
             [
                 pl.col("date"),
                 pl.col("DateTime").alias("first_bar_time"),
+                pl.col("Open").alias("first_bar_open"),
                 pl.col("High").alias("first_bar_high"),
                 pl.col("Low").alias("first_bar_low"),
+                pl.col("Close").alias("first_bar_close"),
                 (pl.col("High") - pl.col("Low")).alias("first_bar_range"),
                 pl.col("avg_daily_range").alias("dra_value"),
             ]
         )
+
+        # Join with previous day's close
+        first_bar_stats = first_bar_stats.join(daily_closes, on="date", how="left")
 
         logger.info(f"Identified first bars for {len(first_bar_stats)} trading days")
         return first_bar_stats
@@ -280,15 +306,30 @@ class FirstBarBreakoutDRAStrategy:
             date = row["date"]  # Keep as pl.Date object
             date_str = str(date)  # String version for display
             first_bar_time = str(row["first_bar_time"])
+            first_bar_open = row["first_bar_open"]
             first_bar_high = row["first_bar_high"]
             first_bar_low = row["first_bar_low"]
+            first_bar_close = row["first_bar_close"]
             first_bar_range = row["first_bar_range"]
             dra_value = row["dra_value"]
+            prev_day_close = row["prev_day_close"]
 
             # Skip if DRA is not available (first n days)
             if dra_value is None or pl.Series([dra_value]).is_null()[0]:
                 logger.debug(f"{date_str}: DRA not available yet")
                 continue
+
+            # Skip if previous day close is not available (first day)
+            if prev_day_close is None or pl.Series([prev_day_close]).is_null()[0]:
+                logger.debug(f"{date_str}: Previous day close not available")
+                continue
+
+            # Calculate gap and first bar direction
+            gap = first_bar_open - prev_day_close
+            gap_percent = gap / prev_day_close
+            first_bar_direction = (
+                "green" if first_bar_close >= first_bar_open else "red"
+            )
 
             # Detect breakout
             direction, breakout_time, entry_price = self.detect_breakout(
@@ -327,9 +368,15 @@ class FirstBarBreakoutDRAStrategy:
                 date=date_str,
                 direction=direction,
                 first_bar_time=first_bar_time,
+                first_bar_open=first_bar_open,
                 first_bar_high=first_bar_high,
                 first_bar_low=first_bar_low,
+                first_bar_close=first_bar_close,
                 first_bar_range=first_bar_range,
+                first_bar_direction=first_bar_direction,
+                prev_day_close=prev_day_close,
+                gap=gap,
+                gap_percent=gap_percent,
                 breakout_time=breakout_time,
                 entry_price=entry_price,
                 stop_loss=stop_loss,
@@ -480,9 +527,15 @@ def export_results_to_csv(results: list[TradeResult], output_path: str) -> None:
         "date": [r.date for r in results],
         "direction": [r.direction for r in results],
         "first_bar_time": [r.first_bar_time for r in results],
+        "first_bar_open": [r.first_bar_open for r in results],
         "first_bar_high": [r.first_bar_high for r in results],
         "first_bar_low": [r.first_bar_low for r in results],
+        "first_bar_close": [r.first_bar_close for r in results],
         "first_bar_range": [r.first_bar_range for r in results],
+        "first_bar_direction": [r.first_bar_direction for r in results],
+        "prev_day_close": [r.prev_day_close for r in results],
+        "gap": [r.gap for r in results],
+        "gap_percent": [r.gap_percent for r in results],
         "breakout_time": [r.breakout_time for r in results],
         "entry_price": [r.entry_price for r in results],
         "stop_loss": [r.stop_loss for r in results],
