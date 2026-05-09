@@ -37,6 +37,7 @@ class TradeResult:
     first_bar_low: float
     first_bar_close: float  # First bar close price
     first_bar_range: float
+    first_bar_volume: int  # First bar volume
     first_bar_direction: Literal["green", "red"]  # Green if close > open, red otherwise
 
     # Gap info
@@ -138,7 +139,7 @@ class FirstBarBreakoutDRAStrategy:
             == pl.time(self.first_bar_time.hour, self.first_bar_time.minute)
         )
 
-        # Get first bar OHLC and range for each date
+        # Get first bar OHLC, volume, and range for each date
         first_bar_stats = first_bars.select(
             [
                 pl.col("date"),
@@ -148,6 +149,7 @@ class FirstBarBreakoutDRAStrategy:
                 pl.col("Low").alias("first_bar_low"),
                 pl.col("Close").alias("first_bar_close"),
                 (pl.col("High") - pl.col("Low")).alias("first_bar_range"),
+                pl.col("Volume").alias("first_bar_volume"),
                 pl.col("avg_daily_range").alias("dra_value"),
             ]
         )
@@ -311,6 +313,7 @@ class FirstBarBreakoutDRAStrategy:
             first_bar_low = row["first_bar_low"]
             first_bar_close = row["first_bar_close"]
             first_bar_range = row["first_bar_range"]
+            first_bar_volume = row["first_bar_volume"]
             dra_value = row["dra_value"]
             prev_day_close = row["prev_day_close"]
 
@@ -373,6 +376,7 @@ class FirstBarBreakoutDRAStrategy:
                 first_bar_low=first_bar_low,
                 first_bar_close=first_bar_close,
                 first_bar_range=first_bar_range,
+                first_bar_volume=first_bar_volume,
                 first_bar_direction=first_bar_direction,
                 prev_day_close=prev_day_close,
                 gap=gap,
@@ -532,6 +536,7 @@ def export_results_to_csv(results: list[TradeResult], output_path: str) -> None:
         "first_bar_low": [r.first_bar_low for r in results],
         "first_bar_close": [r.first_bar_close for r in results],
         "first_bar_range": [r.first_bar_range for r in results],
+        "first_bar_volume": [r.first_bar_volume for r in results],
         "first_bar_direction": [r.first_bar_direction for r in results],
         "prev_day_close": [r.prev_day_close for r in results],
         "gap": [r.gap for r in results],
