@@ -22,6 +22,8 @@ def plot_bars(
     bb_upper_col: Optional[str] = "bb_upper",
     bb_mid_col: Optional[str] = "bb_mid",
     bb_lower_col: Optional[str] = "bb_lower",
+    # Trade markers (optional)
+    trades: Optional[pl.DataFrame] = None,
     # Subplot configuration
     show_volume: bool = True,
     # Visual configuration
@@ -71,6 +73,16 @@ def plot_bars(
         Total chart height in pixels.
     theme : str, default "plotly_dark"
         Plotly theme name. Options: 'plotly_dark', 'plotly_white', 'plotly', etc.
+    trades : pl.DataFrame | None, default None
+        Optional trade overlay. Required columns:
+          - ``DateTime``    — entry bar timestamp (must match the df's datetime_col values)
+          - ``entry_price`` — entry price (y-position of entry marker)
+          - ``direction``   — ``"long"`` or ``"short"`` (determines marker shape)
+        Optional columns:
+          - ``outcome``     — ``"win"`` / ``"loss"`` / ``"breakeven"`` (colors the marker)
+          - ``exit_price``  — plotted as a second marker on the same x-position
+          - ``pnl``         — shown in hover tooltip
+          - ``stop_loss``, ``take_profit`` — shown in hover tooltip
     show_fig : bool, default True
         Whether to display the figure immediately.
     return_fig : bool, default False
@@ -241,6 +253,11 @@ def plot_bars(
 
         logger.info("Added volume subplot")
 
+    # Add trade markers
+    if trades is not None and len(trades) > 0:
+        _add_trade_markers(fig, trades)
+        logger.info(f"Added {len(trades)} trade markers")
+
     # Generate title if not provided
     if title is None:
         date_range = f"{df[datetime_col].min()} to {df[datetime_col].max()}"
@@ -286,6 +303,74 @@ def plot_bars(
         return fig
 
     return None
+
+
+def _add_trade_markers(fig: go.Figure, trades: pl.DataFrame) -> None:
+    """Overlay entry (and optional exit) markers on the price panel."""
+    has_outcome = "outcome" in trades.columns
+    has_exit = "exit_price" in trades.columns
+    has_pnl = "pnl" in trades.columns
+    has_sl = "stop_loss" in trades.columns
+    has_tp = "take_profit" in trades.columns
+
+    def _marker_color(outcome: str | None) -> str:
+        if outcome == "win":
+            return "#00cc44"
+        if outcome == "loss":
+            return "#ff3333"
+        return "#aaaaaa"
+
+    for row in trades.iter_rows(named=True):
+        direction = row.get("direction", "long")
+        entry_price = row["entry_price"]
+        entry_dt = row["DateTime"]
+        outcome = row.get("outcome") if has_outcome else None
+
+        symbol = "triangle-up" if direction == "long" else "triangle-down"
+        color = "#1e90ff" if direction == "long" else "#ff8c00"
+
+        hover_parts = [f"Entry: {entry_price:.2f}", f"Dir: {direction}"]
+        if has_sl:
+            hover_parts.append(f"SL: {row['stop_loss']:.2f}")
+        if has_tp:
+            hover_parts.append(f"TP: {row['take_profit']:.2f}")
+        if has_pnl:
+            hover_parts.append(f"PnL: {row['pnl']:.2f}")
+        if outcome:
+            hover_parts.append(f"Outcome: {outcome}")
+
+        fig.add_trace(
+            go.Scatter(
+                x=[entry_dt],
+                y=[entry_price],
+                mode="markers",
+                marker=dict(symbol=symbol, size=12, color=color, line=dict(width=1, color="white")),
+                name=f"Entry ({direction})",
+                hovertext="<br>".join(hover_parts),
+                hoverinfo="text",
+                showlegend=False,
+            ),
+            row=1,
+            col=1,
+        )
+
+        if has_exit and row.get("exit_price") is not None:
+            exit_price = row["exit_price"]
+            exit_color = _marker_color(outcome)
+            fig.add_trace(
+                go.Scatter(
+                    x=[entry_dt],
+                    y=[exit_price],
+                    mode="markers",
+                    marker=dict(symbol="x", size=10, color=exit_color, line=dict(width=2)),
+                    name="Exit",
+                    hovertext=f"Exit: {exit_price:.2f}" + (f" ({outcome})" if outcome else ""),
+                    hoverinfo="text",
+                    showlegend=False,
+                ),
+                row=1,
+                col=1,
+            )
 
 
 # Made with Bob
