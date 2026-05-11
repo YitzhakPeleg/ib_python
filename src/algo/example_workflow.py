@@ -14,14 +14,14 @@ from pathlib import Path
 import polars as pl
 from loguru import logger
 
-from ..data_fetching.date_converter import add_date_int_column
-from .backtester import backtest_trade_setups, generate_performance_report
-from .signal_generator import SignalGenerator
-from .train_signal_model import (
+from algo.backtester import backtest_trade_setups, generate_performance_report
+from algo.signal_generator import SignalGenerator
+from algo.train_signal_model import (
     load_and_prepare_data,
     save_model,
     train_random_forest_model,
 )
+from data_fetching.date_converter import add_date_int_column
 
 
 def complete_workflow_example(

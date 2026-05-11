@@ -3,7 +3,7 @@
 import polars as pl
 from loguru import logger
 
-from .models import SignalType
+from models import SignalType
 
 
 def create_labels(

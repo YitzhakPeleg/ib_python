@@ -9,14 +9,14 @@ from loguru import logger
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix
 
-from ..data_fetching.date_converter import add_date_int_column
-from .bollinger_bands import calculate_bollinger_bands
-from .feature_engineering import (
+from algo.bollinger_bands import calculate_bollinger_bands
+from algo.feature_engineering import (
     add_technical_indicators,
     engineer_morning_features,
 )
-from .labeling import create_labels, create_labels_with_timing
-from .signal_detector import filter_morning_window
+from algo.labeling import create_labels, create_labels_with_timing
+from algo.signal_detector import filter_morning_window
+from data_fetching.date_converter import add_date_int_column
 
 
 def load_and_prepare_data(

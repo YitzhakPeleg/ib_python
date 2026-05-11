@@ -1,0 +1,26 @@
+FIRST BAR BREAKOUT - RISK-REWARD RATIO GRID SEARCH
+================================================================================
+
+Ticker: SPY
+Frequency: 1 min
+Trading Days: 333
+Risk-Reward Ratios Tested: 0.5R to 4.0R (step 0.1)
+
+BEST PARAMETERS
+--------------------------------------------------------------------------------
+Best Total PnL: RR=3.1R ($23.68)
+Best Profit Factor: RR=3.1R (1.13)
+Best Win Rate: RR=0.5R (65.47%)
+
+TOP 10 BY TOTAL PNL
+--------------------------------------------------------------------------------
+RR=3.1R: PnL=$  23.68 | WinRate=26.1% | PF=1.13 | AvgPnL=$ 0.07
+RR=3.2R: PnL=$  23.37 | WinRate=25.5% | PF=1.13 | AvgPnL=$ 0.07
+RR=3.3R: PnL=$  23.17 | WinRate=25.5% | PF=1.13 | AvgPnL=$ 0.07
+RR=3.0R: PnL=$  21.40 | WinRate=26.7% | PF=1.12 | AvgPnL=$ 0.06
+RR=2.7R: PnL=$  21.25 | WinRate=29.1% | PF=1.12 | AvgPnL=$ 0.06
+RR=2.8R: PnL=$  18.63 | WinRate=27.6% | PF=1.10 | AvgPnL=$ 0.06
+RR=3.4R: PnL=$  18.53 | WinRate=24.3% | PF=1.10 | AvgPnL=$ 0.06
+RR=3.7R: PnL=$  18.35 | WinRate=23.1% | PF=1.10 | AvgPnL=$ 0.06
+RR=3.8R: PnL=$  18.00 | WinRate=22.5% | PF=1.09 | AvgPnL=$ 0.05
+RR=4.0R: PnL=$  16.78 | WinRate=21.6% | PF=1.09 | AvgPnL=$ 0.05

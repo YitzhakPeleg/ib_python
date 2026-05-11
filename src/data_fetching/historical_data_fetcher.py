@@ -12,9 +12,9 @@ from ibapi.contract import Contract
 from loguru import logger
 from rich.pretty import pretty_repr
 
-from ..algo.models import BarFrequency, ContractSpec
-from .date_converter import add_date_int_column
-from .ibapi_wrapper import IBapi
+from data_fetching.date_converter import add_date_int_column
+from data_fetching.ibapi_wrapper import IBapi
+from models import BarFrequency, ContractSpec
 
 DEFAULT_START_DATE = datetime(year=2020, month=1, day=1, hour=0, minute=0, second=0)
 
@@ -170,7 +170,9 @@ class HistoricalDataFetcher(IBapi):
 
         # Calculate duration string
 
-        if duration < timedelta(days=1):
+        if duration > timedelta(days=365):
+            duration_str = f"{duration // timedelta(days=365)} Y"
+        elif duration < timedelta(days=1):
             duration_str = f"{int(duration.total_seconds())} S"
         else:
             duration_str = f"{duration // timedelta(days=1)} D"
@@ -286,8 +288,8 @@ def get_data(
         # get_historical_data auto-connects if needed
         df = fetcher.get_historical_data(
             contract=contract,
-            end_date=datetime(2024, 12, 31, 23, 59, 59),
-            duration=timedelta(days=365),
+            end_date=end_date,
+            duration=duration,
             frequency=freq,
             timeout=timedelta(minutes=30),
             timezone="US/Eastern",
@@ -304,8 +306,8 @@ def get_data(
 
 if __name__ == "__main__":
     get_data(
-        symbol="AAPL",
-        end_date=datetime(2024, 12, 31, 23, 59, 59),
-        frequency=BarFrequency.FIVE_MIN,
-        duration=timedelta(days=1),
+        symbol="SPY",
+        end_date=datetime(2026, 12, 31, 23, 59, 59),
+        frequency=BarFrequency.ONE_MIN,
+        duration=timedelta(days=1000),
     )

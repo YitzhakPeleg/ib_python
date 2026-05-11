@@ -5,7 +5,7 @@ from typing import Optional
 import polars as pl
 from loguru import logger
 
-from .models import SignalType, TradeSetup
+from models import SignalType, TradeSetup
 
 
 def filter_morning_window(

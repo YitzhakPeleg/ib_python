@@ -7,14 +7,14 @@ import joblib
 import polars as pl
 from loguru import logger
 
-from ..data_fetching.date_converter import add_date_int_column
-from .bollinger_bands import calculate_bollinger_bands
-from .feature_engineering import add_technical_indicators, engineer_morning_features
-from .models import SignalType, TradeSetup
-from .signal_detector import (
+from algo.bollinger_bands import calculate_bollinger_bands
+from algo.feature_engineering import add_technical_indicators, engineer_morning_features
+from algo.signal_detector import (
     create_trade_setup,
     filter_morning_window,
 )
+from data_fetching.date_converter import add_date_int_column
+from models import SignalType, TradeSetup
 
 
 class SignalGenerator:

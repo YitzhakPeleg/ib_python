@@ -27,6 +27,10 @@ def add_date_int_column(df: pl.DataFrame) -> pl.DataFrame:
             .cast(pl.Int64)  # Cast string to Integer
             .alias("date")
         )
+    else:
+        raise ValueError(
+            "Invalid DataFrame: 'DateTime' column not found or not of type String or Datetime"
+        )
 
 
 # Example usage:

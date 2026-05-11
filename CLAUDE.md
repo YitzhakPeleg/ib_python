@@ -1,148 +1,79 @@
-# CLAUDE.md - Project Context & Guidelines
+# CLAUDE.md
 
-## Project Overview
-- **Name**: ib-python
-- **Purpose**: Interactive Brokers API wrapper, market data utilities, and algorithmic trading tools
-- **Python Version**: >=3.12
-- **Description**: A comprehensive toolkit for fetching historical market data from Interactive Brokers, calculating technical indicators (Bollinger Bands), and training machine learning models for trading strategies.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Package Management
-- **Tool**: UV (uv) - NOT pip
-- **Commands**:
-  - Install dependencies: `uv sync`
-  - Add package: `uv add <package>`
-  - Remove package: `uv remove <package>`
-  - Install project in editable mode: `uv pip install -e .`
+## Commands
 
-## Project Structure
-```
-ib_python/
-├── src/                          # Source code modules
-│   ├── data_fetching/           # IB API data fetching utilities
-│   │   ├── __init__.py          # Module exports
-│   │   ├── ibapi_wrapper.py     # Enhanced IBapi wrapper with multi-request support
-│   │   ├── historical_data_fetcher.py  # High-level historical data fetcher
-│   │   └── date_converter.py    # Date/time conversion utilities
-│   ├── algo/                    # Trading algorithms and ML models
-│   │   ├── models.py            # Pydantic data models (ContractSpec, BarFrequency, etc.)
-│   │   ├── bollinger_bands.py   # Bollinger Bands indicator calculation
-│   │   └── train_algo.py        # ML pipeline for trading strategy (Decision Tree & Neural Network)
-│   └── notebooks/               # Analysis and visualization scripts
-│       └── plot_data.py         # Plotly-based data visualization
-├── docs/                        # Documentation (numbered files)
-│   ├── 00_developer_guide.md   # Development setup and guidelines
-│   ├── 01_architecture.md      # System design and data flow
-│   ├── 02_data_fetching.md     # Data fetching module documentation
-│   ├── 03_algorithms.md        # Trading algorithms and ML models
-│   ├── 04_api_reference.md     # Detailed API documentation
-│   └── 05_examples.md          # Practical usage examples
-├── main.py                      # Main entry point
-├── pyproject.toml               # UV/pip project configuration
-├── uv.lock                      # UV lock file
-├── ibapi-10.45.1-py3-none-any.whl  # Local IB API wheel
-├── README.md                    # Project overview
-├── CLAUDE.md                    # This file - development context
-└── .gitignore                   # Git ignore rules
+```bash
+uv sync                        # Install/update dependencies
+uv add <package>               # Add a package
+uv run python <script>.py      # Run a script in the venv
+
+# Linting / formatting
+uv run ruff check src/
+uv run ruff format src/
+
+# Run a strategy backtest
+python run_first_bar_breakout.py
+python run_grid_search_dra.py
+python run_grid_search_rr.py
+python run_grid_search_fixed.py
+python run_grid_search_mixed_fixed.py
+python run_all_grid_searches_5min.py
+
+# ML pipeline
+uv run python src/algo/train_algo.py
+uv run python src/algo/train_signal_model.py
 ```
 
-## Current Branch
-- **Branch**: `update-deps-and-remove-devcontainer`
-- **Default Branch**: `main`
+## Architecture
 
-## Key Dependencies
-- `ibapi` - Interactive Brokers API (local wheel file, version 10.45.1)
-- `polars>=1.31.0` - High-performance DataFrame library
-- `plotly[express]>=6.2.0` - Interactive visualization
-- `loguru>=0.7.3` - Logging
-- `rich>=14.0.0` - Terminal formatting
-- `pydantic-settings>=2.0.0` - Configuration management
-- `scikit-learn>=1.8.0` - Machine learning (Decision Trees)
-- `torch>=2.11.0` - Deep learning (Neural Networks)
-- `jupyterlab>=4.4.4` - Jupyter notebooks
-- `ruff>=0.12.3` - Linting and formatting
+The project is a backtesting and signal-generation toolkit for intraday equity trading, primarily focused on SPY via Interactive Brokers. There is no test suite — validation is done by running strategy scripts and checking `results/`.
 
-## Module Overview
+### Data layer (`src/models/`, `data/`)
 
-### src/data_fetching/
-Handles all interactions with Interactive Brokers API for fetching historical market data.
+- `src/models/models.py` — shared Pydantic/dataclass types: `ContractSpec`, `BarFrequency`, `SignalType`, `TradeSetup`, `SignalResult`
+- `src/models/paths.py` — `DATA_PATH` constant (repo root `/data/`) and `get_file(ticker, frequency)` which resolves Parquet filenames like `SPY_1_min.parquet`
+- `data/` — Parquet files fetched from IB API, named `{TICKER}_{frequency}.parquet` (e.g., `SPY_1_min.parquet`)
+- All DataFrames use a `DateTime` column (Polars `Datetime`) and `Open/High/Low/Close/Volume`. A `date` column (`pl.Date`) is derived as needed.
 
-- **ibapi_wrapper.py**: Base wrapper class extending EWrapper and EClient with multi-request support
-- **historical_data_fetcher.py**: High-level interface for fetching historical data with automatic connection management
-- **date_converter.py**: Utilities for converting datetime formats to integer date representations (YYYYMMDD)
+### Data fetching (`src/data_fetching/`)
 
-### src/algo/
-Trading algorithms, technical indicators, and machine learning models.
+- `ibapi_wrapper.py` — extends IB's `EWrapper`/`EClient` with multi-request support and threading
+- `historical_data_fetcher.py` — high-level fetcher; connects to TWS/Gateway at `localhost:4002` (paper) or `4001` (live)
+- IB Gateway must be running before any fetch; fetched data is saved as Parquet
 
-- **models.py**: Pydantic models for type-safe data structures (ContractSpec, BarFrequency, SecurityType, etc.)
-- **bollinger_bands.py**: Calculate Bollinger Bands technical indicator
-- **train_algo.py**: Complete ML pipeline including:
-  - Feature engineering (normalized prices, BB ratios, ATR-based targets)
-  - Decision Tree classifier for directional prediction
-  - Neural Network (PyTorch) for advanced modeling
-  - Backtesting and performance visualization
+### Strategy layer (`src/algo/`)
 
-### src/notebooks/
-Analysis scripts and visualization tools (can be run as Python scripts or in Jupyter).
+Each strategy variant is a self-contained class with a `backtest(df)` method that returns a list of `TradeResult` dataclasses. All variants follow the same First Bar Breakout pattern — trade the breakout of the 9:30 AM bar — but differ in how TP/SL are sized:
 
-- **plot_data.py**: Plotly-based visualizations including candlestick charts, Bollinger Bands, and intraday analysis
+| File | TP/SL sizing |
+|---|---|
+| `first_bar_breakout.py` | Risk-reward ratio × first-bar range |
+| `first_bar_breakout_dra.py` | Daily Range Average (DRA) × coefficient K |
+| `first_bar_breakout_fixed.py` | Fixed dollar amount |
+| `first_bar_breakout_mixed_fixed.py` | Mixed: fixed TP, DRA-based SL |
 
-## Configuration
-- Settings can be managed via environment variables or `.env` file
-- IB API connection defaults:
-  - Host: `127.0.0.1`
-  - Port: `4002` (paper trading) or `4001` (live trading)
-  - Client ID: `1`
+Supporting modules:
+- `daily_range.py` — `daily_range_avg(df, n)`: rolling average of daily high-low range, joined back to intraday df
+- `resample_bars.py` — resample 1-min data to any timeframe (`resample_to_5min`, `resample_to_timeframe`)
+- `backtester.py` — generic backtest engine for `TradeSetup`/`SignalResult` objects (used by ML signal path)
+- `signal_generator.py` — `SignalGenerator` loads a `.joblib` sklearn model, runs feature engineering, and emits `TradeSetup` objects
+- `signal_detector.py` / `feature_engineering.py` / `labeling.py` — feature engineering for the ML pipeline (morning window 09:00–11:00 ET)
 
-## Data Flow
-1. **Data Fetching**: `HistoricalDataFetcher` → IB Gateway/TWS → Historical bars
-2. **Data Processing**: Raw bars → Polars DataFrame → Technical indicators (Bollinger Bands)
-3. **Feature Engineering**: OHLCV data → Normalized features → ML-ready dataset
-4. **Model Training**: Features → Decision Tree/Neural Network → Predictions
-5. **Visualization**: Results → Plotly charts → Analysis
+Grid search runners (`run_grid_search_*.py` at repo root) iterate over parameter combinations and write CSVs + summary `.txt` files to `results/`.
 
-## Important Notes
-- IBapi connects to TWS/Gateway on `localhost:4002` (paper trading) or `4001` (live)
-- All IB connection code uses configurable host/port parameters
-- Use `uv` commands instead of pip/poetry
-- Data is stored in Parquet format for efficient storage and retrieval
-- ML models use time-series train/test splits to prevent lookahead bias
-- ATR-based targets are used instead of fixed percentage targets for better adaptability
+### Visualization (`src/visualization/`)
 
-## Development Workflow
-1. **Setup**: `uv sync` to install dependencies
-2. **Data Fetching**: Use `HistoricalDataFetcher` to download market data
-3. **Analysis**: Run visualization scripts in `src/notebooks/`
-4. **Model Training**: Execute `src/algo/train_algo.py` for ML experiments
-5. **Testing**: Ensure IB Gateway/TWS is running before fetching data
+- `plotting.py` — Plotly-based candlestick/indicator charts (`plot_bars`)
+- `src/notebooks/` — standalone analysis scripts; can be run directly or in JupyterLab
 
-## When Making Changes
-- Update dependencies in `pyproject.toml`
-- Run `uv sync` after updating dependencies
-- Add docstrings to all new functions (Google-style format)
-- Update relevant documentation in `docs/` folder
-- Test with paper trading account before live trading
-- Use type hints for all function parameters and returns
+## Key conventions
 
-## Code Style
-- **Formatter**: Ruff (configured in `pyproject.toml`)
-- **Docstrings**: Google-style format
-- **Type Hints**: Required for all public functions
-- **Imports**: Organized (standard library → third-party → local)
-- **Line Length**: 88 characters (Black-compatible)
-
-## Documentation
-- All documentation files in `docs/` use numbered naming: `<XY>_<topic>.md`
-- Start with `00_developer_guide.md` for setup and guidelines
-- See `docs/` folder for comprehensive documentation
-
-## Testing
-- Manual testing with IB paper trading account
-- Verify data fetching with small date ranges first
-- Check ML model performance on test set before deployment
-- Use `loguru` for debugging and monitoring
-
-## Resources
-- [Interactive Brokers API Documentation](https://interactivebrokers.github.io/tws-api/)
-- [Polars Documentation](https://pola-rs.github.io/polars/)
-- [PyTorch Documentation](https://pytorch.org/docs/)
-- Project documentation: See `docs/` folder
+- **Package manager**: `uv` only — never `pip` directly
+- **DataFrame library**: Polars (not pandas)
+- **Formatter/linter**: Ruff (88-char line length, Black-compatible)
+- **Docstrings**: Google style on all public functions
+- **Import paths**: scripts at repo root use `from src.algo...` / `from src.models...`; modules inside `src/` use relative imports or bare module names (e.g., `from models import ...`)
+- **Results**: all output CSVs and summary files go to `results/`
+- **IB connection**: paper trading port `4002`, live `4001`; never hardcode live credentials
