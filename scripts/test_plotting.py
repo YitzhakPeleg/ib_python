@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 import polars as pl
 from loguru import logger
-from plotting import plot_bars
+from src.visualization.plotting import plot_bars
 
 def create_synthetic_ohlc_data(n_bars: int = 100) -> pl.DataFrame:
     """Create synthetic OHLC data for testing."""
