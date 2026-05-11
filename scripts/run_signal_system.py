@@ -1,11 +1,5 @@
 """Run the complete signal detection system."""
 
-import sys
-from pathlib import Path
-
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
-
 from src.algo.example_workflow import complete_workflow_example
 
 if __name__ == "__main__":

@@ -15,8 +15,8 @@ from loguru import logger
 from sklearn.metrics import classification_report
 from sklearn.tree import DecisionTreeClassifier, export_text
 
-from algo.bollinger_bands import calculate_bollinger_bands
-from data_fetching.date_converter import add_date_int_column
+from src.algo.bollinger_bands import calculate_bollinger_bands
+from src.data_fetching.date_converter import add_date_int_column
 
 pio.renderers.default = "browser"
 

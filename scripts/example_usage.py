@@ -3,10 +3,10 @@
 import polars as pl
 from loguru import logger
 
-from algo.bollinger_bands import calculate_bollinger_bands
-from data_fetching.date_converter import add_date_int_column
-from models import BarFrequency, get_file
-from visualization import plot_bars
+from src.algo.bollinger_bands import calculate_bollinger_bands
+from src.data_fetching.date_converter import add_date_int_column
+from src.models import BarFrequency, get_file
+from src.visualization import plot_bars
 
 # Configure logger
 logger.info("Starting visualization example")
