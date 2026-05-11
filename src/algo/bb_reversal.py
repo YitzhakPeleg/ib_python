@@ -1,4 +1,4 @@
-"""BB Consecutive-Bar Reversal signal detection and backtest."""
+"""BB Consecutive-Bar Reversal signal detection, backtest, and analysis."""
 
 from dataclasses import dataclass
 from typing import Literal
@@ -12,7 +12,7 @@ from src.algo.bollinger_bands import calculate_bollinger_bands
 
 @dataclass
 class BBReversalTradeResult:
-    """Result of a single BB reversal trade."""
+    """Result of a single BB reversal trade, with analysis dimensions."""
 
     date: int
     direction: Literal["long", "short"]
@@ -25,6 +25,12 @@ class BBReversalTradeResult:
     pnl: float
     r_multiple: float
     bars_held: int
+    # Analysis dimensions
+    signal_hour: int           # hour of the signal bar (9–15)
+    band_width_pct: float      # (bb_upper - bb_lower) / bb_mid × 100
+    bar1_range: float          # 1st bar High - Low
+    bar2_range: float          # 2nd bar High - Low
+    bar_size_ratio: float      # bar2_range / bar1_range
 
 
 def detect_bb_reversal_signals(
@@ -52,6 +58,7 @@ def detect_bb_reversal_signals(
     Returns:
         Input DataFrame with appended columns:
             is_green, is_red, bb_mid, bb_upper, bb_lower,
+            prev_is_green, prev_is_red, prev_high, prev_low,
             signal_direction ("long" | "short" | null),
             entry_price, stop_loss, take_profit (float | null).
     """
@@ -97,14 +104,12 @@ def detect_bb_reversal_signals(
             .then(pl.lit("short"))
             .otherwise(None)
             .alias("signal_direction"),
-            # entry_price
             pl.when(long_cond)
             .then(pl.col("High"))
             .when(short_cond)
             .then(pl.col("Low"))
             .otherwise(None)
             .alias("entry_price"),
-            # stop_loss: 2nd bar's opposite edge
             pl.when(long_cond)
             .then(pl.col("Low"))
             .when(short_cond)
@@ -114,7 +119,6 @@ def detect_bb_reversal_signals(
         ]
     )
 
-    # take_profit at R=1: entry ± risk
     df = df.with_columns(
         pl.when(pl.col("signal_direction") == "long")
         .then(pl.col("entry_price") + (pl.col("entry_price") - pl.col("stop_loss")))
@@ -133,23 +137,18 @@ def detect_bb_reversal_signals(
 
 def backtest_bb_reversal(df: pl.DataFrame) -> pl.DataFrame:
     """
-    Backtest all BB reversal signals in the labeled DataFrame.
-
-    For each signal, simulates bar-by-bar from entry until SL, TP, or EOD.
+    Backtest all BB reversal signals, capturing analysis dimensions per trade.
 
     Args:
-        df: Output of detect_bb_reversal_signals (must contain signal_direction,
-            entry_price, stop_loss, take_profit columns).
+        df: Output of detect_bb_reversal_signals.
 
     Returns:
-        DataFrame with one row per trade and columns:
-            date, direction, entry_price, stop_loss, take_profit,
-            exit_price, exit_reason, outcome, pnl, r_multiple, bars_held.
+        DataFrame with one row per trade including trade metrics and:
+            signal_hour, band_width_pct, bar1_range, bar2_range, bar_size_ratio.
     """
     signals = df.filter(pl.col("signal_direction").is_not_null())
     logger.info(f"Backtesting {len(signals):,} signals...")
 
-    # Pre-partition by date for O(1) daily lookups
     daily_dfs: dict[int, pl.DataFrame] = {}
     for partition in df.sort("DateTime").partition_by("date"):
         daily_dfs[partition["date"][0]] = partition
@@ -163,6 +162,15 @@ def backtest_bb_reversal(df: pl.DataFrame) -> pl.DataFrame:
         entry_price = float(row["entry_price"])
         stop_loss = float(row["stop_loss"])
         take_profit = float(row["take_profit"])
+
+        bar2_range = float(row["High"]) - float(row["Low"])
+        bar1_high = row["prev_high"]
+        bar1_low = row["prev_low"]
+        bar1_range = (float(bar1_high) - float(bar1_low)) if (bar1_high is not None and bar1_low is not None) else 0.0
+        bar_size_ratio = bar2_range / bar1_range if bar1_range > 0 else 0.0
+
+        bb_mid = float(row["bb_mid"])
+        band_width_pct = ((float(row["bb_upper"]) - float(row["bb_lower"])) / bb_mid * 100) if bb_mid else 0.0
 
         daily_df = daily_dfs.get(date)
         if daily_df is None:
@@ -220,6 +228,11 @@ def backtest_bb_reversal(df: pl.DataFrame) -> pl.DataFrame:
                 pnl=pnl,
                 r_multiple=r_multiple,
                 bars_held=bars_held,
+                signal_hour=entry_dt.hour,
+                band_width_pct=band_width_pct,
+                bar1_range=bar1_range,
+                bar2_range=bar2_range,
+                bar_size_ratio=bar_size_ratio,
             )
         )
 
@@ -236,11 +249,60 @@ def backtest_bb_reversal(df: pl.DataFrame) -> pl.DataFrame:
             "pnl": [r.pnl for r in results],
             "r_multiple": [r.r_multiple for r in results],
             "bars_held": [r.bars_held for r in results],
+            "signal_hour": [r.signal_hour for r in results],
+            "band_width_pct": [r.band_width_pct for r in results],
+            "bar1_range": [r.bar1_range for r in results],
+            "bar2_range": [r.bar2_range for r in results],
+            "bar_size_ratio": [r.bar_size_ratio for r in results],
         }
     )
 
     _log_summary(results_df)
     return results_df
+
+
+def analyze_bb_reversal(results_df: pl.DataFrame) -> None:
+    """Print win-rate / avg-PnL breakdowns by time of day, band width, and bar size ratio."""
+
+    def _print_breakdown(df: pl.DataFrame, group_col: str, label: str) -> None:
+        tbl = (
+            df.group_by(group_col)
+            .agg(
+                [
+                    pl.len().alias("trades"),
+                    (pl.col("outcome") == "win").mean().alias("win_rate"),
+                    pl.col("pnl").mean().alias("avg_pnl"),
+                    pl.col("r_multiple").mean().alias("avg_r"),
+                ]
+            )
+            .sort(group_col)
+        )
+        print(f"\n{'='*60}")
+        print(f"  {label}")
+        print(f"{'='*60}")
+        with pl.Config(tbl_rows=30, float_precision=3):
+            print(tbl)
+
+    # ── Time of day (by hour) ──────────────────────────────────────
+    _print_breakdown(results_df, "signal_hour", "Win rate by hour of day")
+
+    # ── Band width quartiles ───────────────────────────────────────
+    bw_labels = ["narrow (Q1)", "mid-low (Q2)", "mid-high (Q3)", "wide (Q4)"]
+    results_with_bw = results_df.with_columns(
+        pl.col("band_width_pct")
+        .qcut(4, labels=bw_labels, allow_duplicates=True)
+        .alias("band_width_bucket")
+    )
+    _print_breakdown(results_with_bw, "band_width_bucket", "Win rate by band width (quartiles)")
+
+    # ── Bar size ratio quartiles ───────────────────────────────────
+    ratio_labels = ["small (Q1)", "mid-low (Q2)", "mid-high (Q3)", "large (Q4)"]
+    results_with_ratio = results_df.filter(pl.col("bar_size_ratio") > 0).with_columns(
+        pl.col("bar_size_ratio")
+        .qcut(4, labels=ratio_labels, allow_duplicates=True)
+        .alias("bar_ratio_bucket")
+    )
+    _print_breakdown(results_with_ratio, "bar_ratio_bucket", "Win rate by 2nd/1st bar size ratio (quartiles)")
 
 
 def _log_summary(results_df: pl.DataFrame) -> None:
@@ -263,7 +325,6 @@ def _log_summary(results_df: pl.DataFrame) -> None:
     logger.info(f"Profit factor: {profit_factor:.2f}")
     logger.info(f"Avg R-multiple: {results_df['r_multiple'].mean():.3f}")
     logger.info("=" * 60)
-    # Direction breakdown
     for direction in ("long", "short"):
         sub = results_df.filter(pl.col("direction") == direction)
         w = sub.filter(pl.col("outcome") == "win").height

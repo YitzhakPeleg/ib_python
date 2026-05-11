@@ -5,7 +5,7 @@ from pathlib import Path
 import polars as pl
 from loguru import logger
 
-from src.algo.bb_reversal import backtest_bb_reversal, detect_bb_reversal_signals
+from src.algo.bb_reversal import analyze_bb_reversal, backtest_bb_reversal, detect_bb_reversal_signals
 from src.models import BarFrequency, get_file
 
 
@@ -34,6 +34,8 @@ def main() -> None:
     results_path = output_dir / "SPY_bb_reversal_backtest.csv"
     results_df.write_csv(results_path)
     logger.info(f"Backtest results saved → {results_path}")
+
+    analyze_bb_reversal(results_df)
 
 
 if __name__ == "__main__":
