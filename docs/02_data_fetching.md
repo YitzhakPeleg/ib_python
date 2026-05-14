@@ -145,7 +145,7 @@ def get_historical_data(
 ```python
 from datetime import datetime, timedelta
 from src.data_fetching import HistoricalDataFetcher
-from src.algo.models import ContractSpec, BarFrequency
+from src.models.models import ContractSpec, BarFrequency
 
 contract = ContractSpec(symbol="AAPL")
 
@@ -224,7 +224,7 @@ def add_date_int_column(df: pl.DataFrame) -> pl.DataFrame:
 ```python
 from datetime import datetime, timedelta
 from src.data_fetching import HistoricalDataFetcher
-from src.algo.models import ContractSpec, BarFrequency
+from src.models.models import ContractSpec, BarFrequency
 
 # Create contract
 contract = ContractSpec(symbol="AAPL")
@@ -639,6 +639,5 @@ daily_stats = df.group_by("date").agg([
 
 ## Next Steps
 
-- Review [03_algorithms.md](03_algorithms.md) for data processing and ML
-- Check [04_api_reference.md](04_api_reference.md) for complete API documentation
-- See [05_examples.md](05_examples.md) for more usage examples
+- [01_architecture.md](01_architecture.md) — system design and data flow
+- [00_developer_guide.md](00_developer_guide.md) — development setup
