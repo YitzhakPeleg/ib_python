@@ -137,3 +137,6 @@ twsapi_macunix.1030.01/
 # Ignore logs and data directories
 logs/
 data/
+
+# macOS
+.DS_Store
