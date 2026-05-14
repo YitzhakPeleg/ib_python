@@ -31,34 +31,60 @@ class BBReversalTradeResult:
     bar1_range: float          # 1st bar High - Low
     bar2_range: float          # 2nd bar High - Low
     bar_size_ratio: float      # bar2_range / bar1_range
+    ma_change: float           # |bb_mid[t] − bb_mid[t−T]| in dollars over flat_lookback bars
+    price_range_T: float       # rolling (High_max − Low_min) in dollars over flat_lookback bars
 
 
 def detect_bb_reversal_signals(
     df: pl.DataFrame,
     window: int = 20,
     stds: float = 2.0,
+    flat_lookback: int = 12,
+    flat_ma_max: float = 0.5,
+    flat_range_min: float = 1.5,
+    max_band_width_pct: float | None = None,
+    max_price_range: float | None = None,
+    tp_target: Literal["bb_mid", "bb_band", "r1"] = "bb_mid",
 ) -> pl.DataFrame:
     """
     Detect BB consecutive-bar reversal signals and attach TP/SL levels.
 
     Signal logic (two consecutive bars both outside the same band):
-    - Long:  red bar (Low < lower BB) → green bar (Low < lower BB)
-             entry = green bar High, SL = green bar Low, TP = entry + (entry - SL)
-    - Short: green bar (High > upper BB) → red bar (High > upper BB)
-             entry = red bar Low, SL = red bar High, TP = entry - (SL - entry)
+    - Long:  red bar (Low < lower BB) → green bar (Low < lower BB, Low > prev Low)
+             entry = green bar High, SL = min(bar-2 Low, bar-1 Low)
+    - Short: green bar (High > upper BB) → red bar (High > upper BB, High < prev High)
+             entry = red bar Low, SL = max(bar-2 High, bar-1 High)
 
-    TP is sized at R=1 (same distance as SL from entry).
-    Previous-bar lookback uses `.over("date")` to prevent cross-day bleed.
+    TP options (tp_target):
+    - "bb_mid":  TP = BB middle band (half mean-reversion). Tight TP, R < 1 for longs.
+    - "bb_band": TP = opposite band — bb_upper for longs, bb_lower for shorts.
+                 Full mean-reversion target; improves R significantly for longs.
+    - "r1":      TP = entry ± SL distance (R=1). Guarantees R=1 regardless of band position.
+
+    Additional filters applied:
+    - Time: signal bar must be between 10:00 and 15:25 (excludes first/last 30 min of RTH)
+    - Bar-2 quality: bar-2 Low > bar-1 Low (long) / bar-2 High < bar-1 High (short)
+    - Flat environment: MA change < flat_ma_max AND price range > flat_range_min over T bars
+    - TP validity: entry must be on the correct side of BB mid (long: entry < bb_mid)
+    - max_band_width_pct: exclude wide-band (trending) regime if set
+    - max_price_range: exclude over-active sessions if set
 
     Args:
         df: DataFrame with columns DateTime, Open, High, Low, Close, Volume, date.
         window: BB moving-average period (default 20).
         stds: Number of standard deviations for the bands (default 2.0).
+        flat_lookback: Number of bars to look back for the environment check (default 12 = 1 hour on 5-min bars).
+        flat_ma_max: Max allowed |bb_mid change| over lookback bars in dollars (default $0.50).
+        flat_range_min: Min required high-low range over lookback bars in dollars (default $1.50).
+        max_band_width_pct: If set, exclude bars where (bb_upper−bb_lower)/bb_mid×100 exceeds this value.
+        max_price_range: If set, exclude bars where rolling price_range_T exceeds this value.
+        tp_target: TP sizing method — "bb_mid" (default), "bb_band" (opposite band), or "r1".
 
     Returns:
         Input DataFrame with appended columns:
-            is_green, is_red, bb_mid, bb_upper, bb_lower,
+            is_green, is_red, bb_mid, bb_upper, bb_lower, band_width_pct,
             prev_is_green, prev_is_red, prev_high, prev_low,
+            ma_change, price_range_T,
             signal_direction ("long" | "short" | null),
             entry_price, stop_loss, take_profit (float | null).
     """
@@ -68,6 +94,7 @@ def detect_bb_reversal_signals(
         [
             (pl.col("Close") > pl.col("Open")).alias("is_green"),
             (pl.col("Close") < pl.col("Open")).alias("is_red"),
+            ((pl.col("bb_upper") - pl.col("bb_lower")) / pl.col("bb_mid") * 100).alias("band_width_pct"),
         ]
     )
 
@@ -82,11 +109,56 @@ def detect_bb_reversal_signals(
         ]
     )
 
+    # Flat environment: |bb_mid change| OR high-low range over last T bars < K dollars.
+    # Rolling high/low computed per day to prevent cross-day contamination.
+    parts = []
+    for part in df.sort("DateTime").partition_by("date", maintain_order=True):
+        part = part.with_columns([
+            pl.col("High").rolling_max(window_size=flat_lookback, min_periods=flat_lookback).alias("roll_high_T"),
+            pl.col("Low").rolling_min(window_size=flat_lookback, min_periods=flat_lookback).alias("roll_low_T"),
+        ])
+        parts.append(part)
+    df = pl.concat(parts).sort("DateTime")
+
+    df = df.with_columns([
+        (pl.col("bb_mid") - pl.col("bb_mid").shift(flat_lookback).over("date")).abs().alias("ma_change"),
+        (pl.col("roll_high_T") - pl.col("roll_low_T")).alias("price_range_T"),
+    ])
+
+    # Ranging environment: MA is stable AND price is actively oscillating
+    is_flat = (pl.col("ma_change") < flat_ma_max) & (pl.col("price_range_T") > flat_range_min)
+
+    # No trades in the first or last 30 minutes of the session (9:30–9:59, 15:30–15:59)
+    # Cast to Int32 before multiplying — dt.hour()/minute() return i8 which overflows at 127
+    bar_minutes = (
+        pl.col("DateTime").dt.hour().cast(pl.Int32) * 60
+        + pl.col("DateTime").dt.minute().cast(pl.Int32)
+    )
+    is_valid_time = (bar_minutes >= 600) & (bar_minutes < 930)  # 10:00 – 15:25
+
+    # Optional price-regime filters (exclude trending/over-active markets)
+    is_narrow_band = (
+        pl.col("band_width_pct") < max_band_width_pct
+        if max_band_width_pct is not None
+        else pl.lit(True)
+    )
+    is_bounded_range = (
+        pl.col("price_range_T") < max_price_range
+        if max_price_range is not None
+        else pl.lit(True)
+    )
+
     long_cond = (
         pl.col("prev_is_red")
         & (pl.col("prev_low") < pl.col("prev_bb_lower"))
         & pl.col("is_green")
         & (pl.col("Low") < pl.col("bb_lower"))
+        & (pl.col("Low") > pl.col("prev_low"))   # bar-2 low above bar-1 low
+        & (pl.col("High") < pl.col("bb_mid"))     # entry (bar-2 High) below TP (bb_mid)
+        & is_flat
+        & is_valid_time
+        & is_narrow_band
+        & is_bounded_range
     )
 
     short_cond = (
@@ -94,6 +166,12 @@ def detect_bb_reversal_signals(
         & (pl.col("prev_high") > pl.col("prev_bb_upper"))
         & pl.col("is_red")
         & (pl.col("High") > pl.col("bb_upper"))
+        & (pl.col("High") < pl.col("prev_high"))  # bar-2 high below bar-1 high
+        & (pl.col("Low") > pl.col("bb_mid"))      # entry (bar-2 Low) above TP (bb_mid)
+        & is_flat
+        & is_valid_time
+        & is_narrow_band
+        & is_bounded_range
     )
 
     df = df.with_columns(
@@ -111,22 +189,43 @@ def detect_bb_reversal_signals(
             .otherwise(None)
             .alias("entry_price"),
             pl.when(long_cond)
-            .then(pl.col("Low"))
+            .then(pl.min_horizontal(pl.col("Low"), pl.col("prev_low")))
             .when(short_cond)
-            .then(pl.col("High"))
+            .then(pl.max_horizontal(pl.col("High"), pl.col("prev_high")))
             .otherwise(None)
             .alias("stop_loss"),
         ]
     )
 
-    df = df.with_columns(
-        pl.when(pl.col("signal_direction") == "long")
-        .then(pl.col("entry_price") + (pl.col("entry_price") - pl.col("stop_loss")))
-        .when(pl.col("signal_direction") == "short")
-        .then(pl.col("entry_price") - (pl.col("stop_loss") - pl.col("entry_price")))
-        .otherwise(None)
-        .alias("take_profit")
-    )
+    # TP sizing — three modes
+    if tp_target == "bb_mid":
+        # Half mean-reversion: TP = BB middle band
+        df = df.with_columns(
+            pl.when(pl.col("signal_direction").is_not_null())
+            .then(pl.col("bb_mid"))
+            .otherwise(None)
+            .alias("take_profit")
+        )
+    elif tp_target == "bb_band":
+        # Full mean-reversion: long → bb_upper, short → bb_lower
+        df = df.with_columns(
+            pl.when(pl.col("signal_direction") == "long")
+            .then(pl.col("bb_upper"))
+            .when(pl.col("signal_direction") == "short")
+            .then(pl.col("bb_lower"))
+            .otherwise(None)
+            .alias("take_profit")
+        )
+    else:  # "r1"
+        # TP = entry ± SL distance (R=1)
+        df = df.with_columns(
+            pl.when(pl.col("signal_direction") == "long")
+            .then(pl.col("entry_price") + (pl.col("entry_price") - pl.col("stop_loss")))
+            .when(pl.col("signal_direction") == "short")
+            .then(pl.col("entry_price") - (pl.col("stop_loss") - pl.col("entry_price")))
+            .otherwise(None)
+            .alias("take_profit")
+        )
 
     n_long = df.filter(pl.col("signal_direction") == "long").height
     n_short = df.filter(pl.col("signal_direction") == "short").height
@@ -171,6 +270,8 @@ def backtest_bb_reversal(df: pl.DataFrame) -> pl.DataFrame:
 
         bb_mid = float(row["bb_mid"])
         band_width_pct = ((float(row["bb_upper"]) - float(row["bb_lower"])) / bb_mid * 100) if bb_mid else 0.0
+        ma_change = float(row.get("ma_change") or 0.0)
+        price_range_T = float(row.get("price_range_T") or 0.0)
 
         daily_df = daily_dfs.get(date)
         if daily_df is None:
@@ -233,6 +334,8 @@ def backtest_bb_reversal(df: pl.DataFrame) -> pl.DataFrame:
                 bar1_range=bar1_range,
                 bar2_range=bar2_range,
                 bar_size_ratio=bar_size_ratio,
+                ma_change=ma_change,
+                price_range_T=price_range_T,
             )
         )
 
@@ -254,6 +357,8 @@ def backtest_bb_reversal(df: pl.DataFrame) -> pl.DataFrame:
             "bar1_range": [r.bar1_range for r in results],
             "bar2_range": [r.bar2_range for r in results],
             "bar_size_ratio": [r.bar_size_ratio for r in results],
+            "ma_change": [r.ma_change for r in results],
+            "price_range_T": [r.price_range_T for r in results],
         }
     )
 
@@ -262,7 +367,7 @@ def backtest_bb_reversal(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def analyze_bb_reversal(results_df: pl.DataFrame) -> None:
-    """Print win-rate / avg-PnL breakdowns by time of day, band width, and bar size ratio."""
+    """Print win-rate / avg-PnL breakdowns by time of day, band width, bar size ratio, and flatness."""
 
     def _print_breakdown(df: pl.DataFrame, group_col: str, label: str) -> None:
         tbl = (
@@ -304,6 +409,44 @@ def analyze_bb_reversal(results_df: pl.DataFrame) -> None:
     )
     _print_breakdown(results_with_ratio, "bar_ratio_bucket", "Win rate by 2nd/1st bar size ratio (quartiles)")
 
+    # ── Flatness: MA change quartiles ─────────────────────────────
+    flat_labels = ["very flat (Q1)", "flat (Q2)", "moderate (Q3)", "active (Q4)"]
+    results_with_mac = results_df.filter(pl.col("ma_change").is_not_null()).with_columns(
+        pl.col("ma_change")
+        .qcut(4, labels=flat_labels, allow_duplicates=True)
+        .alias("ma_change_bucket")
+    )
+    _print_breakdown(results_with_mac, "ma_change_bucket", "Win rate by MA change over T bars (quartiles)")
+
+    # ── Flatness: price range quartiles ───────────────────────────
+    results_with_rng = results_df.filter(pl.col("price_range_T").is_not_null()).with_columns(
+        pl.col("price_range_T")
+        .qcut(4, labels=flat_labels, allow_duplicates=True)
+        .alias("price_range_bucket")
+    )
+    _print_breakdown(results_with_rng, "price_range_bucket", "Win rate by price range over T bars (quartiles)")
+
+    # ── Cross-tab: band width × price range ───────────────────────
+    cross = (
+        results_with_bw.join(results_with_rng.select(["date", "direction", "entry_price", "price_range_bucket"]),
+                             on=["date", "direction", "entry_price"], how="inner")
+        .group_by(["band_width_bucket", "price_range_bucket"])
+        .agg(
+            [
+                pl.len().alias("trades"),
+                (pl.col("outcome") == "win").mean().alias("win_rate"),
+                pl.col("pnl").mean().alias("avg_pnl"),
+                pl.col("pnl").sum().alias("total_pnl"),
+            ]
+        )
+        .sort(["band_width_bucket", "price_range_bucket"])
+    )
+    print(f"\n{'='*60}")
+    print("  Cross-tab: band_width × price_range")
+    print(f"{'='*60}")
+    with pl.Config(tbl_rows=30, float_precision=3):
+        print(cross)
+
 
 def _log_summary(results_df: pl.DataFrame) -> None:
     total = len(results_df)
@@ -316,7 +459,7 @@ def _log_summary(results_df: pl.DataFrame) -> None:
     profit_factor = gross_profit / gross_loss if gross_loss else float("inf")
 
     logger.info("=" * 60)
-    logger.info("BACKTEST SUMMARY — BB Reversal (R=1)")
+    logger.info("BACKTEST SUMMARY — BB Reversal (TP = BB mid)")
     logger.info("=" * 60)
     logger.info(f"Total trades : {total}")
     logger.info(f"Wins / Losses: {wins} / {losses}  ({win_rate:.2%} win rate)")
