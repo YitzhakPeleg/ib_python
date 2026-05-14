@@ -260,7 +260,6 @@ def plot_bars(
 
     # Generate title if not provided
     if title is None:
-        date_range = f"{df[datetime_col].min()} to {df[datetime_col].max()}"
         title = f"Candlestick Chart ({len(df)} bars)"
         logger.debug(f"Auto-generated title: {title}")
 
