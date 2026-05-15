@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "plotly[express]>=6.2.0",
     "polars>=1.31.0",
-    "ibapi @ file:///Users/yitzhakpeleg/Projects/ib_python/ibapi-10.45.1-py3-none-any.whl",
+    "ibapi",
     "jupyterlab>=4.4.4",
     "ruff>=0.12.3",
     "loguru>=0.7.3",
@@ -19,6 +19,9 @@ dependencies = [
     "torchvision>=0.26.0",
     "torchaudio>=2.11.0",
 ]
+
+[tool.uv.sources]
+ibapi = { path = "ibapi-10.45.1-py3-none-any.whl" }
 
 [dependency-groups]
 dev = [
