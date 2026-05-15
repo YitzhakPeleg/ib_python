@@ -26,6 +26,10 @@ def plot_bars(
     trades: Optional[pl.DataFrame] = None,
     # Subplot configuration
     show_volume: bool = True,
+    # Y-axis range overrides
+    price_range_half: Optional[float] = None,
+    volume_min: float = 0,
+    volume_max: Optional[float] = None,
     # Visual configuration
     title: Optional[str] = None,
     height: int = 800,
@@ -285,10 +289,18 @@ def plot_bars(
     else:
         fig.update_xaxes(title_text="Time", row=1, col=1)
 
-    # Update y-axis labels
-    fig.update_yaxes(title_text="Price", row=1, col=1)
+    # Update y-axis labels and optional fixed ranges
+    price_kwargs: dict = {"title_text": "Price", "row": 1, "col": 1}
+    if price_range_half is not None:
+        center = round(df[open_col][0])
+        price_kwargs["range"] = [center - price_range_half, center + price_range_half]
+    fig.update_yaxes(**price_kwargs)
+
     if show_volume:
-        fig.update_yaxes(title_text="Volume", row=2, col=1)
+        vol_kwargs: dict = {"title_text": "Volume", "row": 2, "col": 1}
+        if volume_max is not None:
+            vol_kwargs["range"] = [volume_min, volume_max]
+        fig.update_yaxes(**vol_kwargs)
 
     logger.info(f"Chart created successfully with theme '{theme}'")
 
@@ -343,7 +355,12 @@ def _add_trade_markers(fig: go.Figure, trades: pl.DataFrame) -> None:
                 x=[entry_dt],
                 y=[entry_price],
                 mode="markers",
-                marker=dict(symbol=symbol, size=12, color=color, line=dict(width=1, color="white")),
+                marker=dict(
+                    symbol=symbol,
+                    size=12,
+                    color=color,
+                    line=dict(width=1, color="white"),
+                ),
                 name=f"Entry ({direction})",
                 hovertext="<br>".join(hover_parts),
                 hoverinfo="text",
@@ -361,9 +378,12 @@ def _add_trade_markers(fig: go.Figure, trades: pl.DataFrame) -> None:
                     x=[entry_dt],
                     y=[exit_price],
                     mode="markers",
-                    marker=dict(symbol="x", size=10, color=exit_color, line=dict(width=2)),
+                    marker=dict(
+                        symbol="x", size=10, color=exit_color, line=dict(width=2)
+                    ),
                     name="Exit",
-                    hovertext=f"Exit: {exit_price:.2f}" + (f" ({outcome})" if outcome else ""),
+                    hovertext=f"Exit: {exit_price:.2f}"
+                    + (f" ({outcome})" if outcome else ""),
                     hoverinfo="text",
                     showlegend=False,
                 ),
