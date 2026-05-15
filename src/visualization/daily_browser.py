@@ -16,6 +16,9 @@ from src.models.models import BarFrequency
 from src.models.paths import get_file
 from src.visualization.plotting import plot_bars
 
+# Price columns that need rescaling in % Change mode
+_PRICE_COLS = ["Open", "High", "Low", "Close", "bb_upper", "bb_mid", "bb_lower"]
+
 
 def _apply_indicators(
     df: pl.DataFrame,
@@ -36,29 +39,44 @@ def _get_dates(df: pl.DataFrame) -> list:
     return sorted(df["date"].unique().to_list())
 
 
+def _to_pct(day_df: pl.DataFrame) -> pl.DataFrame:
+    """Rescale all price columns to % change relative to the first bar's Open."""
+    first_open = day_df["Open"][0]
+    cols = [c for c in _PRICE_COLS if c in day_df.columns]
+    return day_df.with_columns(
+        ((pl.col(c) / first_open - 1) * 100).alias(c) for c in cols
+    )
+
+
 def _build_figure(
     df: pl.DataFrame,
     day: object,
     active_labels: list[str],
     indicator_cols: dict[str, list[str]],
     ticker: str,
+    pct_mode: bool = False,
 ) -> go.Figure:
     day_df = df.filter(pl.col("date") == day)
-    bb_on = "BollingerBands" in active_labels
+    if pct_mode:
+        day_df = _to_pct(day_df)
 
+    bb_on = "BollingerBands" in active_labels
     fig = plot_bars(
         day_df,
         bb_upper_col="bb_upper" if (bb_on and "bb_upper" in day_df.columns) else None,
         bb_mid_col="bb_mid" if (bb_on and "bb_mid" in day_df.columns) else None,
         bb_lower_col="bb_lower" if (bb_on and "bb_lower" in day_df.columns) else None,
         title=f"{ticker} — {day}",
-        price_range_half=10,
+        price_range_half=None if pct_mode else 10,
         volume_min=10_000,
         volume_max=1_000_000,
         show_fig=False,
         return_fig=True,
     )
     assert fig is not None
+
+    if pct_mode:
+        fig.update_yaxes(title_text="% Change", row=1, col=1)
 
     # Add non-BB indicator traces to the price panel
     for label, cols in indicator_cols.items():
@@ -144,7 +162,7 @@ def run(
                     "padding": "8px 12px",
                 },
             ),
-            # Indicator toggles + volume scale
+            # Indicator toggles + display options
             html.Div(
                 [
                     dcc.Checklist(
@@ -154,8 +172,11 @@ def run(
                         inline=True,
                     ),
                     dcc.Checklist(
-                        id="volume-log-toggle",
-                        options=[{"label": "  Log volume", "value": "log"}],
+                        id="display-toggles",
+                        options=[
+                            {"label": "  Log volume", "value": "log_volume"},
+                            {"label": "  % Change", "value": "pct"},
+                        ],
                         value=[],
                         inline=True,
                         style={"marginLeft": "24px"},
@@ -187,17 +208,20 @@ def run(
         Output("chart", "figure"),
         Input("date-dropdown", "value"),
         Input("indicator-toggles", "value"),
-        Input("volume-log-toggle", "value"),
+        Input("display-toggles", "value"),
     )
     def update_chart(
         date_str: str,
         active_labels: list[str] | None,
-        volume_log: list[str] | None,
+        display: list[str] | None,
     ) -> go.Figure:
+        display = display or []
         matching = [d for d in dates if str(d) == date_str]
         day = matching[0] if matching else dates[0]
-        fig = _build_figure(df, day, active_labels or [], indicator_cols, ticker)
-        if "log" in (volume_log or []):
+        fig = _build_figure(
+            df, day, active_labels or [], indicator_cols, ticker, pct_mode="pct" in display
+        )
+        if "log_volume" in display:
             # log10 range [4, 6] → [10 000, 1 000 000]
             fig.update_yaxes(type="log", range=[4, 6], title_text="Volume", row=2, col=1)
         return fig
