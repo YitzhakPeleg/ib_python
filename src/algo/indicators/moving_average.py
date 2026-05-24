@@ -4,7 +4,9 @@ from .base import Indicator
 
 
 class MovingAverage(Indicator):
-    def __init__(self, window: int = 20, col: str = "Close", out_col: str | None = None):
+    def __init__(
+        self, window: int = 20, col: str = "Close", out_col: str | None = None
+    ):
         self.window = window
         self.col = col
         self.out_col = out_col or f"ma_{window}"
