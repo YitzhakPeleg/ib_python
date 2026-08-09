@@ -239,15 +239,30 @@ class HistoricalDataFetcher(IBapi):
                 schema=["DateTime", "Open", "High", "Low", "Close", "Volume"]
             )
 
-        # Convert DateTime from epoch seconds to datetime
+        # Convert DateTime to a proper datetime. IB's historicalData callback
+        # returns epoch seconds for intraday bar sizes, but for "1 day"/"1
+        # week"/"1 month" bars it always returns a plain YYYYMMDD date string
+        # instead (formatDate=2 only affects intraday requests) — the two
+        # need different parsing or day+ bars silently end up with garbage
+        # 1970-era timestamps (YYYYMMDD misread as a small epoch-seconds value).
         try:
-            df = df.with_columns(
-                [
-                    (pl.col("DateTime").cast(pl.Int64) * 1000)
-                    .cast(pl.Datetime(time_unit="ms", time_zone=timezone or "UTC"))
+            if frequency in (BarFrequency.ONE_DAY, BarFrequency.ONE_WEEK, BarFrequency.ONE_MONTH):
+                df = df.with_columns(
+                    pl.col("DateTime")
+                    .cast(pl.Utf8)
+                    .str.strptime(pl.Date, "%Y%m%d")
+                    .cast(pl.Datetime(time_unit="ms"))
+                    .dt.replace_time_zone(timezone or "UTC")
                     .alias("DateTime")
-                ]
-            )
+                )
+            else:
+                df = df.with_columns(
+                    [
+                        (pl.col("DateTime").cast(pl.Int64) * 1000)
+                        .cast(pl.Datetime(time_unit="ms", time_zone=timezone or "UTC"))
+                        .alias("DateTime")
+                    ]
+                )
             logger.info(f"Retrieved {len(df)} bars for {contract.symbol}")
         except Exception as e:
             logger.warning(f"Could not convert DateTime to datetime: {e}")
