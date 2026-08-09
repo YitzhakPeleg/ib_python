@@ -22,6 +22,11 @@ def plot_bars(
     bb_upper_col: Optional[str] = "bb_upper",
     bb_mid_col: Optional[str] = "bb_mid",
     bb_lower_col: Optional[str] = "bb_lower",
+    # TrendSMA columns (optional, pre-calculated)
+    trend_fast_col: Optional[str] = "trend_sma_fast",
+    trend_mid_col: Optional[str] = "trend_sma_mid",
+    trend_slow_col: Optional[str] = "trend_sma_slow",
+    trend_signal_col: Optional[str] = "trend_signal",
     # Trade markers (optional)
     trades: Optional[pl.DataFrame] = None,
     # Subplot configuration
@@ -107,8 +112,8 @@ def plot_bars(
     Basic usage with Bollinger Bands:
 
     >>> import polars as pl
-    >>> from src.visualization.plotting import plot_bars
-    >>> from src.algo.bollinger_bands import calculate_bollinger_bands
+    >>> from visualization.plotting import plot_bars
+    >>> from algo.indicators import BollingerBands
     >>>
     >>> df = pl.read_parquet("AAPL_1_min.parquet")
     >>> df = calculate_bollinger_bands(df, window=20, stds=2.0)
@@ -155,6 +160,12 @@ def plot_bars(
             "Some Bollinger Band columns missing. Skipping BB overlay. "
             "Use calculate_bollinger_bands() to add them."
         )
+
+    # Check for TrendSMA
+    has_trend = all(
+        col is not None and col in df.columns
+        for col in [trend_fast_col, trend_slow_col, trend_signal_col]
+    )
 
     # Create subplots
     if show_volume:
@@ -234,6 +245,97 @@ def plot_bars(
         )
 
         logger.info("Added Bollinger Bands overlay")
+
+    # Add TrendSMA overlay
+    if has_trend:
+        assert trend_fast_col is not None
+        assert trend_slow_col is not None
+        assert trend_signal_col is not None
+
+        # Shaded fill between fast and slow SMAs, colored by trend_signal
+        fill_styles = [
+            (1, "rgba(0,200,0,0.15)"),
+            (0, "rgba(128,128,128,0.10)"),
+            (-1, "rgba(200,0,0,0.15)"),
+        ]
+        for sig_val, fill_color in fill_styles:
+            fast_masked = df.select(
+                pl.when(pl.col(trend_signal_col) == sig_val)
+                .then(pl.col(trend_fast_col))
+                .otherwise(None)
+            ).to_series()
+            slow_masked = df.select(
+                pl.when(pl.col(trend_signal_col) == sig_val)
+                .then(pl.col(trend_slow_col))
+                .otherwise(None)
+            ).to_series()
+            # Base trace (slow SMA) — fills from here
+            fig.add_trace(
+                go.Scatter(
+                    x=df[datetime_col],
+                    y=slow_masked,
+                    line=dict(width=0),
+                    showlegend=False,
+                    connectgaps=False,
+                    hoverinfo="skip",
+                ),
+                row=1,
+                col=1,
+            )
+            # Fill trace (fast SMA) — fills tonexty (to the slow SMA base above)
+            fig.add_trace(
+                go.Scatter(
+                    x=df[datetime_col],
+                    y=fast_masked,
+                    fill="tonexty",
+                    fillcolor=fill_color,
+                    line=dict(width=0),
+                    showlegend=False,
+                    connectgaps=False,
+                    hoverinfo="skip",
+                ),
+                row=1,
+                col=1,
+            )
+
+        # SMA lines (on top of fill)
+        fig.add_trace(
+            go.Scatter(
+                x=df[datetime_col],
+                y=df[trend_fast_col],
+                line=dict(color="rgba(0,200,255,0.9)", width=1.5),
+                name="Fast SMA",
+                showlegend=True,
+            ),
+            row=1,
+            col=1,
+        )
+        has_mid = trend_mid_col is not None and trend_mid_col in df.columns
+        if has_mid:
+            fig.add_trace(
+                go.Scatter(
+                    x=df[datetime_col],
+                    y=df[trend_mid_col],
+                    line=dict(color="rgba(255,255,255,0.7)", width=1, dash="dash"),
+                    name="Mid SMA",
+                    showlegend=True,
+                ),
+                row=1,
+                col=1,
+            )
+        fig.add_trace(
+            go.Scatter(
+                x=df[datetime_col],
+                y=df[trend_slow_col],
+                line=dict(color="rgba(255,165,0,0.9)", width=1.5),
+                name="Slow SMA",
+                showlegend=True,
+            ),
+            row=1,
+            col=1,
+        )
+
+        logger.info("Added TrendSMA overlay")
 
     # Add volume subplot
     if show_volume:

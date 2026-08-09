@@ -10,11 +10,11 @@ import polars as pl
 from dash import Dash, Input, Output, State, ctx, dcc, html
 from loguru import logger
 
-from src.algo.indicators.base import Indicator
-from src.algo.indicators.bollinger_bands import BollingerBands
-from src.models.models import BarFrequency
-from src.models.paths import get_file
-from src.visualization.plotting import plot_bars
+from algo.indicators.base import Indicator
+from algo.indicators.bollinger_bands import BollingerBands
+from models.models import BarFrequency
+from models.paths import get_file
+from visualization.plotting import plot_bars
 
 # Price columns that need rescaling in % Change mode
 _PRICE_COLS = ["Open", "High", "Low", "Close", "bb_upper", "bb_mid", "bb_lower"]
@@ -167,7 +167,9 @@ def run(
                 [
                     dcc.Checklist(
                         id="indicator-toggles",
-                        options=[{"label": f"  {lbl}", "value": lbl} for lbl in all_labels],
+                        options=[
+                            {"label": f"  {lbl}", "value": lbl} for lbl in all_labels
+                        ],
                         value=all_labels,
                         inline=True,
                     ),
@@ -182,7 +184,11 @@ def run(
                         style={"marginLeft": "24px"},
                     ),
                 ],
-                style={"display": "flex", "alignItems": "center", "padding": "0 12px 8px"},
+                style={
+                    "display": "flex",
+                    "alignItems": "center",
+                    "padding": "0 12px 8px",
+                },
             ),
             # Chart
             dcc.Graph(id="chart", style={"height": "80vh"}),
@@ -219,11 +225,18 @@ def run(
         matching = [d for d in dates if str(d) == date_str]
         day = matching[0] if matching else dates[0]
         fig = _build_figure(
-            df, day, active_labels or [], indicator_cols, ticker, pct_mode="pct" in display
+            df,
+            day,
+            active_labels or [],
+            indicator_cols,
+            ticker,
+            pct_mode="pct" in display,
         )
         if "log_volume" in display:
             # log10 range [4, 6] → [10 000, 1 000 000]
-            fig.update_yaxes(type="log", range=[4, 6], title_text="Volume", row=2, col=1)
+            fig.update_yaxes(
+                type="log", range=[4, 6], title_text="Volume", row=2, col=1
+            )
         return fig
 
     logger.info(f"Starting browser at http://localhost:{port}")

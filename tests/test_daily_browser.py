@@ -5,8 +5,8 @@ from datetime import date, datetime, timedelta
 import polars as pl
 import pytest
 
-from src.algo.indicators import BollingerBands, MovingAverage
-from src.visualization.daily_browser import _apply_indicators, _get_dates
+from algo.indicators import BollingerBands, MovingAverage
+from visualization.daily_browser import _apply_indicators, _get_dates
 
 N = 50
 

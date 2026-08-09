@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from src.models.models import BarFrequency
+from models.models import BarFrequency
 
 DATA_PATH: Path = Path(__file__).absolute().parent.parent.parent / "data"
 
