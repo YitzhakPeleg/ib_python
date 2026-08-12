@@ -143,13 +143,18 @@ day's own not-yet-complete range).
 
 ### Result of the exact config above (SPY, full available history)
 
-Data: SPY 1-min bars, 2022-01-06 → 2026-05-01 (1,255 daily sessions total;
-first ~14 sessions consumed by ATR warm-up).
+Data: SPY 1-min bars, 2022-01-06 → 2026-05-01 — 1,083 total trading sessions
+in the dataset (the daily-bars file used for ATR extends further back, to
+2021-08-09, so the first ~14 sessions of the 1-min range are already past
+ATR warm-up).
 
 | Metric | Value |
 |---|---|
-| Trading days with ≥1 trade | 910 |
+| Total sessions in dataset | 1,083 |
+| Sessions with ≥1 trade | 910 (**84.0%** of all sessions) |
+| Sessions with zero trades | 173 (16.0%) — ATR warm-up, or range ≥ ATR/2 by 10:00 |
 | Total trades | 2,101 |
+| Trades per trading day (on days that traded) | 2.3 |
 | Win rate | 52.2% |
 | Mean R-multiple | +0.051 |
 | Total R | +107.7R |
@@ -157,6 +162,10 @@ first ~14 sessions consumed by ATR warm-up).
 | Exit mix | TP 1,063 (50.6%) / SL 938 (44.6%) / EOD 100 (4.8%) |
 | Longs | 986 trades, 51.2% win |
 | Shorts | 1,115 trades, 53.1% win |
+
+The `range < ATR/2` filter is fairly permissive — it only skips about 1 in 6
+sessions, so this isn't a rare-setup strategy; it trades on the large
+majority of days, and multiple times on most of them.
 
 ---
 
