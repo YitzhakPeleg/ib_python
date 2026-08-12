@@ -14,7 +14,7 @@ from rich.pretty import pretty_repr
 
 from data_fetching.date_converter import add_date_int_column
 from data_fetching.ibapi_wrapper import IBapi
-from models import BarFrequency, ContractSpec
+from models import BarFrequency, ContractSpec, SecurityType
 
 DEFAULT_START_DATE = datetime(year=2020, month=1, day=1, hour=0, minute=0, second=0)
 
@@ -167,8 +167,16 @@ class HistoricalDataFetcher(IBapi):
         if contract.expiry is not None:
             ib_contract.lastTradeDateOrContractMonth = contract.expiry
 
-        # Format dates for IB API (yyyymmdd HH:mm:ss UTC)
-        end_datetime_str = end_date.strftime("%Y%m%d %H:%M:%S UTC")
+        # Format dates for IB API (yyyymmdd HH:mm:ss UTC). IB rejects any
+        # endDateTime for CONTINUOUS_FUTURE ("Setting end date/time for
+        # continuous future security type is not allowed") — it can only
+        # fetch up through now, so this must stay "" for that security type
+        # regardless of what end_date the caller passed.
+        end_datetime_str = (
+            ""
+            if contract.sec_type == SecurityType.CONTINUOUS_FUTURE
+            else end_date.strftime("%Y%m%d %H:%M:%S UTC")
+        )
 
         # Calculate duration string
 
