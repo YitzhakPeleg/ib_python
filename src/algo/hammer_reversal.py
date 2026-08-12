@@ -100,6 +100,25 @@ def _is_reversal_candle(
     )
 
 
+def _is_talib_pattern(
+    open_: np.ndarray, high: np.ndarray, low: np.ndarray, close: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """TA-Lib CDLHAMMER + CDLENGULFING based reversal detection, as an
+    alternative to _is_reversal_candle's hand-rolled wick-ratio test.
+
+    CDLHAMMER is bullish-only in TA-Lib (a hammer is defined as a
+    bottom-reversal shape; there's no bearish-hammer counterpart in the
+    library), so the "for short" side relies on CDLENGULFING's -100
+    (bearish engulfing) alone — an inherent asymmetry in TA-Lib's own
+    pattern set, not a bug here.
+    """
+    hammer = talib.CDLHAMMER(open_, high, low, close)
+    engulfing = talib.CDLENGULFING(open_, high, low, close)
+    for_long = (hammer == 100) | (engulfing == 100)
+    for_short = engulfing == -100
+    return for_long, for_short
+
+
 @dataclass
 class HammerTrigger:
     trigger_idx: int
@@ -122,10 +141,13 @@ def _find_hammer_trigger(
     sl_multiple: float = 1.0,
     swap_candle_roles: bool = False,
     any_candle_shape: bool = False,
+    opening_range_minutes: int = OPENING_RANGE_MINUTES,
+    signal_window_minutes: int = SIGNAL_WINDOW_MINUTES,
+    use_talib_pattern: bool = False,
 ) -> Optional[HammerTrigger]:
     """First-signal-wins scan of a day's signal-timeframe bars for a reversal
     candle trading fully outside [or_low, or_high], within
-    SIGNAL_WINDOW_MINUTES of the session open.
+    signal_window_minutes of the session open.
 
     Entry is always the trigger bar's own high (long) / low (short). SL is
     sl_multiple * the trigger bar's own range beyond entry — sl_multiple=1
@@ -158,17 +180,28 @@ def _find_hammer_trigger(
     shape (hammer OR shooting star) qualifies for either direction — the
     only thing that still matters is location (trading outside the opening
     range) and having ONE long, one-sided wick, not which side it's on.
+    Ignored if use_talib_pattern is set.
+
+    use_talib_pattern, if set, replaces _is_reversal_candle's hand-rolled
+    wick-ratio shape test with TA-Lib's CDLHAMMER/CDLENGULFING pattern
+    recognizers (see _is_talib_pattern) — swap_candle_roles and
+    any_candle_shape are ignored in this mode, since TA-Lib's own
+    hammer/engulfing definitions already fix which shape maps to which
+    direction.
     """
-    in_window = (minutes_since_open >= OPENING_RANGE_MINUTES) & (
-        minutes_since_open < SIGNAL_WINDOW_MINUTES
+    in_window = (minutes_since_open >= opening_range_minutes) & (
+        minutes_since_open < signal_window_minutes
     )
-    hammer_long = _is_reversal_candle(open_, high, low, close, 1)
-    hammer_short = _is_reversal_candle(open_, high, low, close, -1)
-    if any_candle_shape:
-        candle_for_long = candle_for_short = hammer_long | hammer_short
+    if use_talib_pattern:
+        candle_for_long, candle_for_short = _is_talib_pattern(open_, high, low, close)
     else:
-        candle_for_long = hammer_short if swap_candle_roles else hammer_long
-        candle_for_short = hammer_long if swap_candle_roles else hammer_short
+        hammer_long = _is_reversal_candle(open_, high, low, close, 1)
+        hammer_short = _is_reversal_candle(open_, high, low, close, -1)
+        if any_candle_shape:
+            candle_for_long = candle_for_short = hammer_long | hammer_short
+        else:
+            candle_for_long = hammer_short if swap_candle_roles else hammer_long
+            candle_for_short = hammer_long if swap_candle_roles else hammer_short
     long_tp = or_high if tp_edge == "far" else or_low
     short_tp = or_low if tp_edge == "far" else or_high
 
@@ -236,12 +269,12 @@ def _simulate_hammer_setup(
     return None  # never filled by end of day
 
 
-def _atr_threshold(atr_prior: float) -> int:
-    """ATR/4 rounded UP to the nearest whole point (e.g. ATR/4=1.42 -> 2) —
-    the actual gate the opening range must clear, kept as a single function
-    so the filter and any display of it can't drift apart.
+def _atr_threshold(atr_prior: float, divisor: float = RANGE_ATR_DIVISOR) -> float:
+    """ATR/divisor rounded UP to the nearest whole point (e.g. ATR/4=1.42 ->
+    2) — the actual gate the opening range must clear, kept as a single
+    function so the filter and any display of it can't drift apart.
     """
-    return math.ceil(atr_prior / RANGE_ATR_DIVISOR)
+    return math.ceil(atr_prior / divisor)
 
 
 def _iter_atr_sessions(
@@ -310,15 +343,20 @@ def _iter_atr_sessions(
 
 
 def _iter_sessions(
-    minute_bars: pl.DataFrame, daily_bars: pl.DataFrame, signal_timeframe: str
+    minute_bars: pl.DataFrame,
+    daily_bars: pl.DataFrame,
+    signal_timeframe: str,
+    opening_range_minutes: int = OPENING_RANGE_MINUTES,
+    range_atr_divisor: float = RANGE_ATR_DIVISOR,
 ) -> Iterator[tuple[str, object, float, float, float, pl.DataFrame]]:
     """_iter_atr_sessions filtered to this strategy's own rule: the opening
-    range must exceed ATR/4 (rounded up — see _atr_threshold).
+    range must exceed ATR/range_atr_divisor (rounded up — see
+    _atr_threshold).
     """
     for ticker, date, or_high, or_low, atr_prior, day_signal in _iter_atr_sessions(
-        minute_bars, daily_bars, signal_timeframe
+        minute_bars, daily_bars, signal_timeframe, opening_range_minutes
     ):
-        if (or_high - or_low) <= _atr_threshold(atr_prior):
+        if (or_high - or_low) <= _atr_threshold(atr_prior, range_atr_divisor):
             continue  # opening bar too quiet for this setup
         yield ticker, date, or_high, or_low, atr_prior, day_signal
 
@@ -332,6 +370,9 @@ def _trigger_for_session(
     sl_multiple: float,
     swap_candle_roles: bool,
     any_candle_shape: bool,
+    opening_range_minutes: int,
+    signal_window_minutes: int,
+    use_talib_pattern: bool,
 ) -> Optional[HammerTrigger]:
     session_open = day_signal["DateTime"][0]
     minutes_since_open = (
@@ -354,6 +395,9 @@ def _trigger_for_session(
         sl_multiple=sl_multiple,
         swap_candle_roles=swap_candle_roles,
         any_candle_shape=any_candle_shape,
+        opening_range_minutes=opening_range_minutes,
+        signal_window_minutes=signal_window_minutes,
+        use_talib_pattern=use_talib_pattern,
     )
 
 
@@ -366,6 +410,10 @@ def run_hammer_backtest(
     sl_multiple: float = 1.0,
     swap_candle_roles: bool = False,
     any_candle_shape: bool = False,
+    opening_range_minutes: int = OPENING_RANGE_MINUTES,
+    signal_window_minutes: int = SIGNAL_WINDOW_MINUTES,
+    range_atr_divisor: float = RANGE_ATR_DIVISOR,
+    use_talib_pattern: bool = False,
 ) -> pl.DataFrame:
     """minute_bars, daily_bars: multi-ticker OHLC (1-min and 1-day resp.),
     each with a `ticker` column, sorted by ticker/DateTime.
@@ -373,12 +421,19 @@ def run_hammer_backtest(
     signal_timeframe: bar size used for the post-opening-range hammer scan
     and trade simulation (the strategy's original spec calls for "5m"; "1m"
     runs the identical rules on 1-min bars instead). tp_edge, rr_multiple,
-    sl_multiple, swap_candle_roles, any_candle_shape: see
-    _find_hammer_trigger.
+    sl_multiple, swap_candle_roles, any_candle_shape, use_talib_pattern: see
+    _find_hammer_trigger. opening_range_minutes, range_atr_divisor: see
+    _iter_sessions — the opening range duration and how large (as a
+    fraction of ATR) it must be to qualify. signal_window_minutes: how long
+    after the open the trigger scan stays active.
     """
     trades = []
     for ticker, date, or_high, or_low, _atr_prior, day_signal in _iter_sessions(
-        minute_bars, daily_bars, signal_timeframe
+        minute_bars,
+        daily_bars,
+        signal_timeframe,
+        opening_range_minutes,
+        range_atr_divisor,
     ):
         trigger = _trigger_for_session(
             day_signal,
@@ -389,6 +444,9 @@ def run_hammer_backtest(
             sl_multiple,
             swap_candle_roles,
             any_candle_shape,
+            opening_range_minutes,
+            signal_window_minutes,
+            use_talib_pattern,
         )
         if trigger is None:
             continue
@@ -415,18 +473,26 @@ def list_hammer_triggers(
     sl_multiple: float = 1.0,
     swap_candle_roles: bool = False,
     any_candle_shape: bool = False,
+    opening_range_minutes: int = OPENING_RANGE_MINUTES,
+    signal_window_minutes: int = SIGNAL_WINDOW_MINUTES,
+    range_atr_divisor: float = RANGE_ATR_DIVISOR,
+    use_talib_pattern: bool = False,
 ) -> pl.DataFrame:
     """Diagnostic listing: one row per (ticker, date) session where a hammer
     trigger fired — regardless of whether the stop-entry ever filled — with
     the context needed to inspect the day: ticker, date, trigger_time,
-    direction, entry_price, sl, tp, atr_prior, atr_quarter (the ATR/4
-    threshold the opening range had to clear, rounded UP to a whole point —
-    see _atr_threshold), or_high, or_low, opening_range. Same parameters as
-    run_hammer_backtest.
+    direction, entry_price, sl, tp, atr_prior, atr_threshold (the
+    range_atr_divisor threshold the opening range had to clear, rounded UP
+    to a whole point — see _atr_threshold), or_high, or_low, opening_range.
+    Same parameters as run_hammer_backtest.
     """
     rows = []
     for ticker, date, or_high, or_low, atr_prior, day_signal in _iter_sessions(
-        minute_bars, daily_bars, signal_timeframe
+        minute_bars,
+        daily_bars,
+        signal_timeframe,
+        opening_range_minutes,
+        range_atr_divisor,
     ):
         trigger = _trigger_for_session(
             day_signal,
@@ -437,6 +503,9 @@ def list_hammer_triggers(
             sl_multiple,
             swap_candle_roles,
             any_candle_shape,
+            opening_range_minutes,
+            signal_window_minutes,
+            use_talib_pattern,
         )
         if trigger is None:
             continue
@@ -451,7 +520,7 @@ def list_hammer_triggers(
                 "sl": trigger.sl,
                 "tp": trigger.tp,
                 "atr_prior": atr_prior,
-                "atr_quarter": _atr_threshold(atr_prior),
+                "atr_threshold": _atr_threshold(atr_prior, range_atr_divisor),
                 "or_high": or_high,
                 "or_low": or_low,
                 "opening_range": or_high - or_low,

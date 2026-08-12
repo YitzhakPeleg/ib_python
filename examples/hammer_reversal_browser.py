@@ -59,7 +59,7 @@ def _build_figure(day_bars: pl.DataFrame, trigger_row: dict) -> go.Figure:
     )
     title = (
         f"{TICKER} — {trigger_row['date']} ({trigger_row['direction']})  |  "
-        f"ATR/4 threshold={trigger_row['atr_quarter']}  |  "
+        f"ATR/4 threshold={trigger_row['atr_threshold']}  |  "
         f"first-15m range={trigger_row['opening_range']:.2f}"
     )
     fig = plot_bars(
@@ -120,7 +120,7 @@ def run(port: int = 8051) -> None:
             "date",
             "trigger_time",
             "direction",
-            pl.col("atr_quarter").alias("atr_threshold"),
+            "atr_threshold",
             "opening_range",
         )
     )

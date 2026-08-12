@@ -1,27 +1,15 @@
-"""ATR-band-filtered opening-range breakout strategy — trade browser.
+"""Quick Flip Scalper strategy — trade browser.
 
-Config: Appendix G's current-best config from
-docs/04_range_breakout_strategy.md — 30-minute opening range, range <
-ATR/2, NO trigger-body restriction (Appendix G.4: require_open_outside was
-found to be a net drag once the rest of the config was tuned, a reversal
-of the project's original A.3 finding), SL=ATR/5, TP=ATR/7 (asymmetric,
-G.3), min_relative_volume=0.08 (opening range must carry >= 8% of the
-ticker's recent typical full-day volume, G.2), multi-trade/day, 13:00
-cutoff, and a 1-MINUTE trigger scan (G.5 — the single biggest lever found:
-the first config where 2019-2021 are all net positive, not just
-less-negative). NO require_direction filter (G.2: doesn't stack
-additively with the volume filter). Backtest runs on the FULL multi-year
-series (not pre-filtered by year) so the 14-day trailing volume average
-stays continuous across the year boundary, then results are filtered to
-YEAR for display — filtering minute_bars by year BEFORE the backtest
-would reset relative_volume's trailing window and lose its first 14
-sessions every year. SPY. See src/algo/range_breakout.py for the rule and
-examples/hammer_reversal_browser.py for the browser this mirrors.
+Config kept from the sweep: 30-minute opening range/box, range >= ATR/4
+("liquidity candle"), signal window 210 minutes (13:00 cutoff on a 9:30
+open), TP at the box's far edge — the best cross-validated cell found
+(+$40.00 over 8 years). See src/algo/quick_flip_scalper.py for the rule
+and examples/range_breakout_browser.py for the browser this mirrors.
 
 Launches a day-by-day Dash browser over every triggered trade, showing
-SIGNAL_TIMEFRAME candles with the opening range shaded, the trigger bar
-marked with a directional triangle (up above the bar for a long, down below
-for a short), and SL/TP drawn.
+5-min candles with the opening box shaded, the trigger candle marked with
+a directional triangle, the confirm (stop-entry fill) bar marked, and
+SL/TP drawn.
 """
 
 import argparse
@@ -31,7 +19,7 @@ import polars as pl
 from dash import Dash, Input, Output, State, ctx, dcc, html
 from loguru import logger
 
-from algo.range_breakout import run_breakout_backtest
+from algo.quick_flip_scalper import run_scalper_backtest
 from algo.resample_bars import resample_to_timeframe
 from models.paths import get_file
 from visualization.plotting import plot_bars
@@ -42,10 +30,9 @@ YEAR = 2018
 OHLCV = ["DateTime", "Open", "High", "Low", "Close", "Volume"]
 
 OPENING_RANGE_MINUTES = 30
-SIGNAL_WINDOW_MINUTES = 210  # trading allowed until 13:00 on a 9:30 open
-SIGNAL_TIMEFRAME = "1m"
-MIN_RELATIVE_VOLUME = 0.08
-TP_ATR_DIVISOR = 7.0
+SIGNAL_WINDOW_MINUTES = 210
+RANGE_ATR_DIVISOR = 4
+SIGNAL_TIMEFRAME = "5m"
 
 
 def load_trades() -> tuple[pl.DataFrame, pl.DataFrame]:
@@ -61,21 +48,15 @@ def load_trades() -> tuple[pl.DataFrame, pl.DataFrame]:
         .select(OHLCV + ["ticker"])
     )
 
-    trades = run_breakout_backtest(
-        minute_bars_full,
+    minute_bars = minute_bars_full.filter(pl.col("DateTime").dt.year() == YEAR)
+    trades = run_scalper_backtest(
+        minute_bars,
         daily_bars,
         signal_timeframe=SIGNAL_TIMEFRAME,
         opening_range_minutes=OPENING_RANGE_MINUTES,
         signal_window_minutes=SIGNAL_WINDOW_MINUTES,
-        range_atr_low_divisor=None,
-        range_atr_high_divisor=2.0,
-        tp_atr_divisor=TP_ATR_DIVISOR,
-        sl_atr_divisor=5.0,
-        allow_multiple_trades_per_day=True,
-        min_relative_volume=MIN_RELATIVE_VOLUME,
+        range_atr_divisor=RANGE_ATR_DIVISOR,
     )
-    trades = trades.filter(pl.col("date").dt.year() == YEAR)
-    minute_bars = minute_bars_full.filter(pl.col("DateTime").dt.year() == YEAR)
     bars_signal = resample_to_timeframe(minute_bars, SIGNAL_TIMEFRAME)
     return trades, bars_signal
 
@@ -93,9 +74,8 @@ def _build_figure(day_bars: pl.DataFrame, trade_row: dict) -> go.Figure:
     title = (
         f"{TICKER} — {trade_row['date']} ({direction}, "
         f"{trade_row['opening_direction']} open)  |  "
-        f"range=[{or_low:.2f}, {or_high:.2f}] ({or_high - or_low:.2f})  |  "
+        f"box=[{or_low:.2f}, {or_high:.2f}] ({or_high - or_low:.2f})  |  "
         f"ATR={trade_row['atr_prior']:.2f}  |  "
-        f"relvol={trade_row['relative_volume']:.1%}  |  "
         f"Result: {result_label}  |  P&L: {pnl_dollars:+.2f} $ (r={trade_row['r_multiple']:.2f})"
     )
     fig = plot_bars(
@@ -132,9 +112,9 @@ def _build_figure(day_bars: pl.DataFrame, trade_row: dict) -> go.Figure:
             col=1,
         )
 
-    # Directional trigger marker: triangle-up ABOVE the bar for a long,
-    # triangle-down BELOW the bar for a short — offset by a small fraction
-    # of the day's own range so it doesn't sit on top of the candle.
+    # Trigger candle: directional triangle. Confirm (stop-entry fill) bar:
+    # a vertical dotted line, since it's a different bar from the trigger
+    # whenever the fill doesn't happen on the very next candle.
     day_range = float(day_bars["High"].max() - day_bars["Low"].min())
     offset = day_range * 0.03
     trigger_row = day_bars.filter(pl.col("DateTime") == trade_row["trigger_time"])
@@ -161,20 +141,24 @@ def _build_figure(day_bars: pl.DataFrame, trade_row: dict) -> go.Figure:
             row=1,
             col=1,
         )
+    fig.add_vline(
+        x=trade_row["confirm_time"],
+        line_dash="dot",
+        line_color="cyan",
+        row=1,
+        col=1,
+    )
 
     return fig
 
 
-def run(port: int = 8052) -> None:
+def run(port: int = 8053) -> None:
     trades, bars_signal = load_trades()
 
-    out_path = f"output/hammer_reversal/spy_range_breakout_trades_{YEAR}.csv"
+    out_path = f"output/hammer_reversal/spy_quick_flip_scalper_trades_{YEAR}.csv"
     trades.write_csv(out_path)
     logger.info(f"{trades.height} trades found — saved to {out_path}")
 
-    # Navigation is per-TRADE, not per-day: multi-trade mode means several
-    # trades can share a date (see 2018-01-24: 4 trades in one session), and
-    # keying by date alone would silently keep only the last one.
     trades = trades.sort("trigger_time")
     trade_rows = trades.to_dicts()
     labels = [
@@ -239,7 +223,7 @@ def run(port: int = 8052) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Range-breakout trade browser")
-    parser.add_argument("--port", type=int, default=8052)
+    parser = argparse.ArgumentParser(description="Quick Flip Scalper trade browser")
+    parser.add_argument("--port", type=int, default=8053)
     args = parser.parse_args()
     run(port=args.port)

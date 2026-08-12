@@ -28,6 +28,18 @@ lucky sample. See Appendix E.5 for the honest, unhedged version of this
 conclusion, including why "just improve TP/SL sizing" likely isn't the
 whole fix.
 
+**Update — [Appendix G](#appendix-g--direction-volume-tp-sizing-and-signal-timeframe-refinements)
+found a materially better config**, layering a few refinements onto the
+Part 2 baseline below: a minimum opening-range volume filter, an
+asymmetric (smaller) take-profit, dropping the `require_open_outside`
+body restriction, and — the biggest single lever — scanning **1-minute**
+bars for the trigger instead of 5-minute ones. That last change is the
+first one found in this whole project that makes **2019, 2020, and 2021
+all net positive**, not just less-bad — the 8-year total rises from
+Appendix E's +$124.57 to **+$196.78**. Part 1/Part 2 below are left as
+originally documented (still a valid, simpler, human-tradeable rule);
+Appendix G has the full refined config and code.
+
 Engine: `src/algo/range_breakout.py` (`run_breakout_backtest`). Shared
 ATR/session-walk infrastructure: `src/algo/hammer_reversal.py`. Visual
 browser: `examples/range_breakout_browser.py`.
@@ -600,6 +612,360 @@ considered.
 
 ---
 
+## Appendix F — Large-Bar Breakout Trigger Family (Not Adopted)
+
+Appendix E.5 flagged two open hypotheses for fixing the 2019-2021 dead zone:
+adaptive/reactive TP-SL sizing, and a separate volatility-regime gate. This
+appendix tests a family of more-reactive trigger and TP/SL variants, all
+built around a "large bar" idea: instead of any bar closing outside the
+opening range, only count it if the bar's own size is meaningfully large
+relative to the day (`High - Low > ATR/y`, swept y = 4-8) — reasoning that a
+big, decisive bar is a stronger continuation signal than a bar that merely
+pokes across the line.
+
+**New `run_breakout_backtest`/`_find_breakout_trigger` parameters added for
+this work:**
+
+| Parameter | Meaning |
+|---|---|
+| `large_bar_atr_divisor` | Extra trigger condition: the bar's own `High-Low` must exceed `ATR/y` |
+| `require_open_inside` | Extra trigger condition: the bar's *open* must still be inside the range (only the single bar that actually crosses from inside to outside counts — not a later continuation bar already outside) |
+| `sl_range_edge` (`"near"`/`"far"`) | SL sits exactly at an opening-range edge — `"near"` = the edge just broken (tight stop), `"far"` = the opposite edge (the strategy's original SL rule). TP is forced to mirror that distance (1:1 R:R) |
+| `sl_at_trigger_extreme` | SL is the trigger bar's own extreme (low for a long, high for a short — an exact, unscaled anchor). If `tp_bar_multiple` is also given, TP scales off the bar's full range; if not, TP mirrors the SL distance (1:1) |
+
+All runs below: SPY, 30-minute opening range, `range < ATR/2` (no floor),
+multi-trade/day, full 8-year CV (2018-2025).
+
+### F.1 Large bar + close outside range, SL at range edge (no `require_open_inside`)
+
+Trigger: any bar (anywhere in the session, not just the one that first
+crosses) that closes outside the range with `High-Low > ATR/y`. SL/TP via
+`sl_range_edge`:
+
+| edge | y=4 | y=6 | y=8 |
+|---|---|---|---|
+| near | +$28.87 (n=352) | +$14.59 (n=1441) | +$26.39 (n=2201) |
+| far | -$19.19 (n=302) | -$50.39 (n=1002) | -$66.34 (n=1389) |
+
+`near` beats `far` at every divisor — a materially tighter, more plausible
+stop right at the breakout level does better than the wide opposite-edge
+stop. `near`/y=4 reproduces the same 2018-2021-bad / 2022-2025-good regime
+split seen throughout Appendix E (2018: -$4.13, 2019: -$3.55, 2020: -$5.92,
+2021: -$10.98, 2022: +$17.67, 2023: +$1.45, 2024: +$1.38, 2025: +$32.95) —
+real corroborating evidence this isn't noise, but no config here beats the
+$124.57 ATR-baseline total, and mean R was negative in most cells despite
+positive total $, suggesting the total is carried by a handful of
+large-risk_dollars winners rather than a broad per-trade edge (fat-tailed,
+not robust).
+
+### F.2 Large bar + close outside range, SL at trigger bar's own extreme
+
+Same trigger, but SL = the trigger bar's own low/high (not the range edge),
+TP mirroring that distance:
+
+| `require_open_outside` | 8-yr total | n |
+|---|---|---|
+| `True` | -$240.20 | 12,467 |
+| `False` | -$218.24 | 12,217 |
+
+Deeply negative in **every single year** for both variants (mean R -0.15 to
+-0.29 across the board) — clearly the worse of the two SL anchors. See F.5
+for a concrete trade walking through why: entry (the bar's close) often
+lands close to the bar's *far* extreme, leaving only a few cents of
+"cushion" down to the bar's own near extreme, so the very next bar's
+ordinary noise is enough to stop it out before the equally-tiny TP is ever
+in reach.
+
+### F.3 Restricting to the actual crossing bar (`require_open_inside`)
+
+Same as F.1 but adding `require_open_inside=True` — only the bar whose open
+was still inside the range and whose close crossed out counts (excludes
+later continuation bars on days where the range was already breached):
+
+| edge | y=4 | y=5 | y=6 | y=7 | y=8 |
+|---|---|---|---|---|---|
+| near | +$12.50 (n=179) | +$7.68 (n=429) | +$6.21 (n=769) | -$0.27 (n=1122) | -$12.47 (n=1473) |
+| far | -$18.19 (n=171) | -$106.23 (n=382) | -$54.86 (n=637) | -$48.54 (n=860) | -$96.67 (n=1062) |
+
+Same shape as F.1 (`near` > `far`, smaller y better for `near`) but roughly
+half the sample size at each y, with total $ shrinking proportionally — i.e.
+restricting to "genuine crossing bars only" filters trades without changing
+$/trade, just makes an already-marginal result noisier. Best cell here
+(near/y=4, +$12.50/179 trades) is too thin to trust on its own.
+
+### F.4 `require_open_inside` + SL at trigger bar's own extreme
+
+Same crossing-bar-only trigger, SL/TP via the trigger bar's own extreme
+(F.2's sizing) instead of the range edge:
+
+| year | y=4 | y=5 | y=6 | y=7 | y=8 |
+|---|---|---|---|---|---|
+| 2018 | -5.75 | -8.90 | -10.86 | -11.26 | -6.47 |
+| 2019 | +0.65 | +1.90 | +3.00 | +5.45 | +2.59 |
+| 2020 | -4.12 | -11.36 | -8.53 | -1.57 | -5.59 |
+| 2021 | +4.07 | +8.56 | +7.36 | +2.58 | +3.32 |
+| 2022 | +6.34 | -9.63 | +6.22 | +10.50 | +5.39 |
+| 2023 | -0.53 | -12.78 | -1.26 | +4.49 | +5.24 |
+| 2024 | -2.20 | -1.10 | -10.78 | -11.55 | -16.51 |
+| 2025 | +2.39 | +7.17 | +18.04 | +8.72 | +8.88 |
+| **8-yr total** | **+0.85** | **-26.14** | **+3.19** | **+7.36** | **-3.15** |
+
+Pure noise: totals bounce between -$26 and +$7 with no consistent sign by
+year or by y, and — unlike every `sl_range_edge` variant above — **no trace
+of the 2018-2021-bad/2022-2025-good regime split**. Anchoring SL to the
+trigger bar's own extreme just doesn't carry a usable edge here, no matter
+how "large" the bar is required to be.
+
+### F.5 Concrete trade walkthrough (why F.2/F.4's SL anchor fails)
+
+First trade, SPY 2019-01-02, `sl_at_trigger_extreme` config: opening range
+[$245.95, $247.40] (width $1.45, well under ATR/2 = $3.14; day ATR =
+$6.27). A 10:05 bar closed above the range but was excluded (open still
+inside, `require_open_outside`); the 10:10 bar (O 248.33, H 248.60, L
+248.20, C 248.38) had both open and close outside — the trigger. Entry =
+close = $248.38. SL = this bar's own low = $248.20 → risk = **$0.18**, about
+1/35th of the day's ATR and under half the trigger bar's own $0.40 range,
+because the close happened to land near the bar's high. TP mirrors that:
+$248.56, also $0.18 away. The very next bar (10:15, L $248.00) — an
+ordinary $0.58 5-minute range, not a reversal — dipped straight through the
+$248.20 stop before price ever moved the $0.18 needed to reach TP. Exit at
+$248.20, r = -1.00. This mechanism (SL pinned to the trigger bar's own
+extreme, often only a few cents from entry) repeats often enough to explain
+F.2/F.4's across-the-board losses.
+
+### F.6 Conclusion
+
+None of this family beats the Appendix E baseline ($124.57, 8-year, TP=SL=
+ATR/5). The one piece with a real, non-noise signal is `sl_range_edge=
+"near"` (SL at the *broken* range edge, not the opposite edge and not the
+trigger bar's own extreme) — it reproduces the familiar 2018-2021-bad/
+2022-2025-good regime split and stays non-negative in most cuts, but tops
+out around +$12-29 over 8 years, an order of magnitude below the baseline,
+and likely fat-tailed (mean R often negative despite positive $ total).
+Anchoring SL to the trigger bar's own extreme (F.2, F.4) is a clear loser
+regardless of trigger strictness or bar-size threshold — the anchor is
+usually too close to entry to survive ordinary next-bar noise (F.5).
+Restricting the trigger to only the genuine inside→outside crossing bar
+(`require_open_inside`) doesn't add edge either; it just thins the sample.
+Net read: **the opening-range edge remains the better SL anchor than
+anything tried off the trigger bar itself**, and "large bar" as an extra
+filter on top of the existing close-outside-range trigger doesn't unlock
+new edge — it's a variation on Appendix E's TP/SL-sizing hypothesis that,
+like the others tried, hasn't cracked 2019-2021.
+
+---
+
+## Appendix G — Direction, Volume, TP Sizing, and Signal-Timeframe Refinements
+
+Where Appendix F tried reshaping the *trigger* (large bars, crossing-only
+bars), this appendix goes back to the Appendix E/Part 2 baseline
+(30m/`<ATR/2`/TP=SL=ATR/5/`require_open_outside`/multi-trade) and layers
+independent refinements on top of it, testing each one's own contribution
+before combining. All results: SPY, full 8-year CV (2018-2025), pooled
+totals unless a per-year table is shown.
+
+**New `run_breakout_backtest` parameters added for this work:** `min_relative_volume`,
+`require_direction`, `tp_atr_z`, `max_open_excess_atr_z` — see their
+docstrings in `src/algo/range_breakout.py` for full details; summarized
+per-experiment below.
+
+### G.1 Directional gate off the opening candle's own color
+
+New param `require_direction` ("with"/"against"): gates which trade
+direction is even considered, based on whether the *opening range candle
+itself* (not the trigger bar) closed green or red — "with" only allows a
+long after a green open / a short after a red open (trade with the early
+momentum); "against" is the mirror (fade it).
+
+| config | n | win% | mean R | total $ |
+|---|---|---|---|---|
+| baseline | 3749 | 50.6 | +0.024 | +124.57 |
+| `dir=with` | 2459 | 51.6 | +0.046 | **+130.00** |
+| `dir=against` | 1291 | 48.6 | -0.019 | -5.89 |
+
+`dir=against` is a clear net loser in every single year and drags the
+pooled total negative — essentially all of the baseline's edge already
+comes from `with` trades. Stripping the `against` trades out *raises*
+total $ slightly (124.57→130.00) on ~1,300 fewer trades, with mean R
+nearly doubling. Per-year, `dir=with` also flips 2021 positive
+(-2.20→+10.34) and roughly halves the 2019/2020 losses — real, if partial,
+progress on Appendix E's open problem, achieved by gating trades rather
+than resizing TP/SL.
+
+### G.2 Volume filter, properly defined
+
+The first attempt (checked and reported inline, not repeated here)
+compared the opening range's volume to its *own* trailing 14-day average
+— a weak, non-monotonic signal. Redefined instead as **opening range
+volume ÷ the trailing 14-session mean of that day's FULL SESSION volume**
+(`min_relative_volume`) — "what fraction of a typical whole day did the
+opening range itself carry." For SPY this sits in a fairly tight,
+right-skewed band: 1%ile 5.8%, 10%ile 7.8%, 25%ile 9.2%, median 11.3%,
+75%ile 14.2%, 90%ile 18.1%, 99%ile 31.9% (max ever 53.2%) — so buckets
+above ~20% are too rare on this one ticker to trust.
+
+Bucketing trades by their own `relative_volume` (no filter applied, just
+sliced post-hoc) cleanly separates one bad cohort from several good ones:
+
+| bucket | n | win% | mean R | total $ |
+|---|---|---|---|---|
+| 1-5% | 5 | 100.0 | +1.000 | +14.69 (noise, n too small) |
+| **5-8%** | 441 | 44.7 | **-0.092** | **-47.40** |
+| 8-10% | 868 | 49.7 | +0.014 | +27.56 |
+| 10-12% | 947 | 52.6 | +0.064 | +70.51 |
+| 12%+ | 1488 | 51.5 | +0.036 | +59.21 |
+
+The 5-8% band (quiet opens) is a genuine, distinct drag; everything at or
+above 8% is fine-to-good. `min_relative_volume=0.08` — excluding just that
+bad band — gives the best standalone result found in the whole project up
+to this point:
+
+| config | n | win% | mean R | total $ |
+|---|---|---|---|---|
+| **`vol>=8%`** | 3303 | 51.3 | +0.038 | **+157.29** |
+
+Per-year it helps 2019-2021 (2019: -18.45→-7.57, 2020: -41.25→-21.92,
+2021: -2.20→+5.55) and *also* improves every one of 2022-2024, but costs
+2018 (+12.51→-2.73) and trims 2025 (+64.99→+49.38) — a real trade-off, not
+a free win. Combining `dir=with` + `vol>=8%` lands *below* either filter
+alone (+$121.67) — the two are removing overlapping subsets of good
+trades, not stacking additively.
+
+### G.3 TP re-sizing (SL fixed at ATR/5)
+
+With `dir=with` + `vol>=8%` already applied, swept `tp_atr_divisor` (SL
+unchanged at ATR/5) to see whether *enlarging* TP — the intuitive
+"give winners more room" move — helps:
+
+| TP divisor | ATR/2 | ATR/2.5 | ATR/3 | ATR/3.5 | ATR/4 | ATR/4.5 | ATR/5 | ATR/6 | **ATR/7** | ATR/8 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| total $ | 30.79 | 59.20 | 83.07 | 112.74 | 123.78 | 113.42 | 121.67 | 120.35 | **139.34** | 124.89 |
+
+Enlarging TP is monotonically *worse* — at ATR/2 the setup collapses to
++$30.79 with 36.5% win rate, because the far target mostly isn't reached
+before end-of-day (24% of trades exit EOD at that setting). *Shrinking*
+TP instead helps, peaking at **ATR/7** (+$139.34, 60.6% win rate) before
+dipping slightly at ATR/8. A separate plausibility cap (`tp_atr_z`,
+capping TP at a fraction of ATR from the opposite edge) was also tried and
+was uniformly *worse* than not using it, at every fraction and every
+filter combination tested — a clean negative result, included for
+completeness but not adopted.
+
+### G.4 The `require_open_outside` reversal
+
+Testing two new "soften the trigger-body rule" ideas —
+`require_open_inside` (hard: only the exact inside→outside crossing bar
+can trigger) and `max_open_excess_atr_z` (soft: a bar whose open is
+already outside is only rejected if it's gone more than `ATR/z` beyond
+the edge) — surfaced something bigger than either idea. On top of
+`vol>=8%` + TP=ATR/7 + SL=ATR/5:
+
+| config | n | win% | mean R | total $ |
+|---|---|---|---|---|
+| `require_open_outside=True` (prior default) | 4035 | 59.5 | +0.029 | +138.51 |
+| **no restriction at all (close only)** | **4624** | **59.6** | **+0.028** | **+174.13** |
+| `require_open_inside` (hard) | 2213 | 58.9 | +0.014 | +78.51 |
+| `max_open_excess_atr_z=5` (soft, tightest) | 3357 | 59.0 | +0.016 | +118.97 |
+| `max_open_excess_atr_z=7` | 2984 | 58.5 | +0.008 | +84.67 |
+| `max_open_excess_atr_z=10` (soft, loosest) | 2718 | 58.5 | +0.007 | +71.76 |
+
+Every restriction on the trigger bar's body — new or old — is worse than
+no restriction at all, and it's monotonic: the *more* "totally out" bars
+you exclude, the worse it gets. This directly reverses Appendix A.3's
+original finding (open+close-outside beat close-only ~20x, $4.22 vs
+$90.40) — re-checked on the plain, unmodified Part 2 baseline (TP=SL=ATR/5,
+no volume filter, no other change) to make sure it wasn't an artifact of
+this appendix's other filters:
+
+| config (plain baseline, no vol filter) | n | total $ |
+|---|---|---|
+| `require_open_outside=True` | 3749 | +124.57 |
+| **no restriction** | **4288** | **+163.87** |
+
+The reversal is real and holds independent of everything else in this
+appendix. Most likely explanation: A.3 was tested under an earlier,
+single-trade, `range<ATR/4` config, before multi-trade mode and the
+current ATR-5-family sizing were adopted — `require_open_outside` appears
+to have been a genuine improvement in that old regime but a net drag once
+the rest of the strategy was tuned around it (a parameter-interaction
+effect, not a bug). **`require_open_outside` is dropped from the config
+going forward.**
+
+### G.5 Signal timeframe: 1m vs 5m vs 15m
+
+With the rest of the config now settled (`vol>=8%`, TP=ATR/7, SL=ATR/5, no
+trigger-body restriction), swept the bar size used for the trigger scan
+itself:
+
+| year | 1m | 5m | 15m |
+|---|---|---|---|
+| 2018 | +1.38 | +4.68 | +7.27 |
+| 2019 | **+0.58** | -12.00 | -11.88 |
+| 2020 | **+8.50** | -1.79 | -21.59 |
+| 2021 | **+9.72** | -0.25 | -1.09 |
+| 2022 | +46.34 | +48.26 | +42.87 |
+| 2023 | +42.46 | +56.99 | +17.87 |
+| 2024 | +42.63 | +42.06 | +26.58 |
+| 2025 | +45.15 | +36.18 | +4.03 |
+| **8-yr total** | **+196.78** | +174.13 | +64.06 |
+| n | 5778 | 4624 | 3380 |
+
+Coarser bars (15m) are worse everywhere, including making 2020 much worse
+(-21.59 vs 5m's -1.79). Finer bars (1m) are better everywhere, and —
+**for the first time in this entire project** — make **every single year
+from 2018 to 2025 net positive**, including 2019-2021. The 2019-2021 gains
+are modest (+$0.58 to +$9.72, not comparable in size to 2022-2025's
++$42-46), but "small and positive" is a categorically different, and much
+more encouraging, result than "reliably negative" — the closest this
+strategy has come to actually resolving Appendix E's open problem, and it
+came from triggering earlier/more precisely, not from resizing TP/SL or
+gating on volume/direction.
+
+### G.6 Combined final config
+
+```python
+trades = run_breakout_backtest(
+    minute_bars,
+    daily_bars,
+    signal_timeframe="1m",              # bar size for the trigger scan
+    opening_range_minutes=30,
+    signal_window_minutes=210,          # 13:00 cutoff
+    range_atr_low_divisor=None,
+    range_atr_high_divisor=2.0,         # range < ATR/2
+    tp_atr_divisor=7.0,                 # TP = ATR/7 (smaller than SL)
+    sl_atr_divisor=5.0,                 # SL = ATR/5
+    min_relative_volume=0.08,           # opening range >= 8% of typical day's volume
+    allow_multiple_trades_per_day=True,
+    # require_open_outside deliberately NOT set — see G.4
+    # require_direction deliberately NOT set — see G.2 (doesn't stack with vol filter)
+)
+```
+
+| Metric | Part 2 baseline | This config |
+|---|---|---|
+| 8-yr total $ | +124.57 | **+196.78** |
+| Trade count | 3,749 | 5,778 |
+| Years net negative | 3 (2019-2021) | **0** |
+
+### G.7 Conclusion
+
+Of every refinement tried in this appendix, three earned a place in the
+final config — a volume floor (`min_relative_volume=0.08`), a smaller
+asymmetric TP (`tp_atr_divisor=7` against `sl_atr_divisor=5`), and,
+biggest of all, dropping `require_open_outside` and switching the trigger
+scan to 1-minute bars. Two ideas were tested and explicitly rejected:
+`require_direction` (real but redundant once the volume filter is
+applied) and any form of trigger-body restriction (`require_open_outside`,
+`require_open_inside`, `max_open_excess_atr_z` — all worse than no
+restriction, a reversal of the project's own earlier A.3 finding). This is
+the best-performing, most broadly-positive config found across the whole
+project — see [Caveats](#caveats--whats-not-done-yet) before reading too
+much into it, especially the transaction-cost caveat: 5,778 trades over 8
+years is considerably more fill-sensitive than the 3,749 of the original
+baseline.
+
+---
+
 ## Caveats — What's Not Done Yet
 
 - **Single ticker.** Every number in this document is SPY only. Earlier,
@@ -614,34 +980,57 @@ considered.
   2022-2025) via a full leave-one-year-out cross-validation. This is real
   evidence against pure overfitting — but it also surfaced a real,
   unresolved failure mode (next bullet), not a clean bill of health.
-- **2019-2021 is an open problem, not just a caveat.** No config in the
-  32-combo search space — including each of those years' own best direct
-  fit — found any edge in 2019, 2020, or 2021. The fixed 14-day-trailing-ATR
-  TP/SL sizing is the common thread across every config tried, but it's only
-  a clean explanation for **2020** (it demonstrably mis-sizes trades during a
-  fast volatility-regime shift like the COVID crash — Appendix E.1). It
-  explains **2019 and 2021** poorly — both were calm, gradually-grinding
-  years with no regime shift, exactly the condition a trailing ATR should
-  handle fine. Per Appendix E.5, this looks like two distinct problems, not
-  one: (a) sizing that lags a volatility shock, fixable with adaptive TP/SL,
-  and (b) the breakout-continuation premise possibly just not holding in a
-  low-vol grind at all, which better sizing wouldn't fix — likely needs a
-  separate regime *gate*, not a resize.
+- **2019-2021 — no longer reliably negative, per Appendix G.5, but not yet
+  robustly solved either.** Every config in the original 32-combo search
+  space failed on 2019-2021, including each year's own best direct fit
+  (Appendix E). Appendix G.5 found the first config where all three years
+  turn net positive: switching the trigger scan to 1-minute bars (combined
+  with the volume filter and re-sized TP from G.2/G.3). The gains there are
+  small (+$0.58 to +$9.72, vs. +$42-46 in 2022-2025) — categorically better
+  than "reliably negative," but not yet shown to be a robust, well-understood
+  edge in those years rather than a smaller, noisier one. The original
+  diagnosis still stands as context: the fixed 14-day-trailing-ATR sizing
+  cleanly explains **2020**'s failure (mis-sizes trades during a fast
+  volatility shift like the COVID crash — Appendix E.1) but explains 2019
+  and 2021 poorly (calm, gradually-grinding years, exactly where a trailing
+  ATR should behave fine) — Appendix E.5's two-distinct-problems framing
+  (adaptive sizing vs. a regime gate) is likely still relevant to why finer
+  triggering helped more than any TP/SL resizing attempt did.
 - **No transaction costs, slippage, or spread.** All P&L is gross, 1
   share/contract, fills assumed exactly at signal prices — worth weighing
   seriously here specifically, since multi-trade mode fills 2-3 times on
   many days and several of the validated mean-R edges are small (+0.02 to
   +0.08 per trade); real costs could erode a meaningful share of that before
-  any TP/SL work even starts.
+  any TP/SL work even starts. This matters even more for Appendix G's final
+  config: 5,778 trades over 8 years (vs. 3,749 for the Part 2 baseline),
+  since the 1-minute trigger scan finds more (and likely more
+  costs-sensitive) setups.
 - **Gap-fade refinement (Appendix B) not yet folded into the live rule** —
   promising, but untested as an actual pre-trade filter.
 - **Data now available for further work:** `data/SPY_full_1_min.parquet`
   (2018-01-02 → 2026-05-01, merged from three separate IB fetches) covers
   the full 8-year span used in Appendix E and can be reused directly for any
   further cross-validation or regime-detection work.
-- **Natural next steps**, roughly in priority order: (1) design and test
-  adaptive/regime-aware TP-SL sizing *and*, separately, a volatility-regime
-  gate (Appendix E.5) — treat these as two hypotheses, not one fix, (2) model
-  transaction costs before trusting the small-mean-R years, (3) run the
-  validated config across all 8 tickers, (4) implement the gap-fade filter
-  (Appendix B) as a real `run_breakout_backtest` parameter and re-validate.
+- **Appendix F narrows the sizing search.** Several reactive TP/SL sizing
+  variants (SL/TP off the trigger bar's own size or extreme, "large bar"
+  trigger filters) were tried and none beat the ATR baseline — the only
+  variant with real (if much smaller) signal keeps the range edge as the SL
+  anchor.
+- **Appendix G found the current best config** (+$196.78, 8-yr, all years
+  positive) by stacking a volume floor, a smaller asymmetric TP, dropping
+  `require_open_outside` (a reversal of Appendix A.3's original finding —
+  see G.4 for why), and switching to a 1-minute trigger scan — the last of
+  which did more for 2019-2021 than any TP/SL resizing attempt in Appendix
+  E or F. This makes "finer/earlier triggering" a more promising direction
+  than further reactive TP/SL sizing off the trigger bar.
+- **Natural next steps**, roughly in priority order: (1) model transaction
+  costs on the Appendix G config before trusting it further — 5,778 trades
+  over 8 years on 1-minute bars is the most costs-sensitive config tried
+  yet, (2) understand *why* 1-minute triggering helps 2019-2021
+  specifically (earlier/tighter entries? less time for the setup to decay
+  before confirming?) rather than just taking the result at face value, (3)
+  run the Appendix G config across all 8 tickers, (4) implement the
+  gap-fade filter (Appendix B) as a real `run_breakout_backtest` parameter
+  and re-validate, (5) revisit the volatility-regime-gate idea (Appendix
+  E.5, option 2) if 1-minute triggering alone doesn't hold up under cost
+  modeling.
