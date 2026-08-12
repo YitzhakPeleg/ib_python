@@ -2,7 +2,9 @@
 
 Config: 30-minute opening range, range < ATR/2 (no floor), trigger requires
 the whole bar (open AND close) outside the range, trading allowed until
-13:00, TP=SL=ATR/4, SPY only — the best config found so far. See
+13:00, multi-trade/day, SL=ATR/4, TP=range-projection (same-day-reactive
+measured-move target — see Appendix E's follow-up experiment in
+docs/04_range_breakout_strategy.md), SPY, filtered to YEAR. See
 src/algo/range_breakout.py for the rule and
 examples/hammer_reversal_browser.py for the browser this mirrors.
 
@@ -25,26 +27,29 @@ from models.paths import get_file
 from visualization.plotting import plot_bars
 
 TICKER = "SPY"
+DATA_LABEL = "SPY_full"  # merged 2018-01-02 -> 2026-05-01 file
+YEAR = 2018
 OHLCV = ["DateTime", "Open", "High", "Low", "Close", "Volume"]
 
 OPENING_RANGE_MINUTES = 30
 SIGNAL_WINDOW_MINUTES = 210  # trading allowed until 13:00 on a 9:30 open
-TP_ATR_DIVISOR = 4.0
+SL_ATR_DIVISOR = 4.0
 
 
 def load_trades() -> tuple[pl.DataFrame, pl.DataFrame]:
-    minute_bars = (
-        pl.read_parquet(get_file(TICKER, "1_min"))
+    minute_bars_full = (
+        pl.read_parquet(get_file(DATA_LABEL, "1_min"))
         .select(OHLCV)
         .with_columns(pl.lit(TICKER).alias("ticker"))
         .sort("DateTime")
     )
     daily_bars = (
-        pl.read_parquet(get_file(TICKER, "1_day"))
-        .select(OHLCV)
+        resample_to_timeframe(minute_bars_full.drop("ticker"), "1d")
         .with_columns(pl.lit(TICKER).alias("ticker"))
-        .sort("DateTime")
+        .select(OHLCV + ["ticker"])
     )
+
+    minute_bars = minute_bars_full.filter(pl.col("DateTime").dt.year() == YEAR)
     trades = run_breakout_backtest(
         minute_bars,
         daily_bars,
@@ -52,9 +57,10 @@ def load_trades() -> tuple[pl.DataFrame, pl.DataFrame]:
         signal_window_minutes=SIGNAL_WINDOW_MINUTES,
         range_atr_low_divisor=None,
         range_atr_high_divisor=2.0,
-        tp_atr_divisor=TP_ATR_DIVISOR,
-        sl_equals_tp=True,
+        sl_atr_divisor=SL_ATR_DIVISOR,
+        tp_range_projection=True,
         require_open_outside=True,
+        allow_multiple_trades_per_day=True,
     )
     bars5 = resample_to_timeframe(minute_bars, "5m")
     return trades, bars5
@@ -69,8 +75,10 @@ def _build_figure(day_bars: pl.DataFrame, trade_row: dict) -> go.Figure:
         "direction"
     ]
     result_label = RESULT_LABELS[trade_row["exit_reason"]]
+    or_low, or_high = trade_row["or_low"], trade_row["or_high"]
     title = (
         f"{TICKER} — {trade_row['date']} ({direction})  |  "
+        f"range=[{or_low:.2f}, {or_high:.2f}] ({or_high - or_low:.2f})  |  "
         f"Result: {result_label}  |  P&L: {pnl_dollars:+.2f} $ (r={trade_row['r_multiple']:.2f})"
     )
     fig = plot_bars(
@@ -143,13 +151,20 @@ def _build_figure(day_bars: pl.DataFrame, trade_row: dict) -> go.Figure:
 def run(port: int = 8052) -> None:
     trades, bars5 = load_trades()
 
-    out_path = "output/hammer_reversal/spy_range_breakout_trades.csv"
+    out_path = f"output/hammer_reversal/spy_range_breakout_trades_{YEAR}.csv"
     trades.write_csv(out_path)
     logger.info(f"{trades.height} trades found — saved to {out_path}")
 
-    dates = trades["date"].to_list()
-    str_dates = [str(d) for d in dates]
-    trades_by_date = {row["date"]: row for row in trades.iter_rows(named=True)}
+    # Navigation is per-TRADE, not per-day: multi-trade mode means several
+    # trades can share a date (see 2018-01-24: 4 trades in one session), and
+    # keying by date alone would silently keep only the last one.
+    trades = trades.sort("trigger_time")
+    trade_rows = trades.to_dicts()
+    labels = [
+        f"{row['date']} {row['trigger_time'].strftime('%H:%M')} "
+        f"({'long' if row['direction'] == 1 else 'short'})"
+        for row in trade_rows
+    ]
 
     app = Dash(__name__)
     app.layout = html.Div(
@@ -158,11 +173,13 @@ def run(port: int = 8052) -> None:
                 [
                     html.Button("◀ Prev", id="prev-btn", n_clicks=0),
                     dcc.Dropdown(
-                        id="date-dropdown",
-                        options=[{"label": s, "value": s} for s in str_dates],
-                        value=str_dates[0],
+                        id="trade-dropdown",
+                        options=[
+                            {"label": lbl, "value": i} for i, lbl in enumerate(labels)
+                        ],
+                        value=0,
                         clearable=False,
-                        style={"width": "220px", "display": "inline-block"},
+                        style={"width": "260px", "display": "inline-block"},
                     ),
                     html.Button("Next ▶", id="next-btn", n_clicks=0),
                 ],
@@ -178,26 +195,25 @@ def run(port: int = 8052) -> None:
     )
 
     @app.callback(
-        Output("date-dropdown", "value"),
+        Output("trade-dropdown", "value"),
         Input("prev-btn", "n_clicks"),
         Input("next-btn", "n_clicks"),
-        State("date-dropdown", "value"),
+        State("trade-dropdown", "value"),
     )
-    def navigate(_prev: int, _nxt: int, current: str) -> str:
+    def navigate(_prev: int, _nxt: int, current: int) -> int:
         trigger = ctx.triggered_id
-        idx = str_dates.index(current) if current in str_dates else 0
+        idx = current if current is not None else 0
         if trigger == "prev-btn":
             idx = max(0, idx - 1)
         elif trigger == "next-btn":
-            idx = min(len(str_dates) - 1, idx + 1)
-        return str_dates[idx]
+            idx = min(len(trade_rows) - 1, idx + 1)
+        return idx
 
-    @app.callback(Output("chart", "figure"), Input("date-dropdown", "value"))
-    def update_chart(date_str: str) -> go.Figure:
-        matching = [d for d in dates if str(d) == date_str]
-        day = matching[0] if matching else dates[0]
-        day_bars = bars5.filter(pl.col("date") == day).sort("DateTime")
-        return _build_figure(day_bars, trades_by_date[day])
+    @app.callback(Output("chart", "figure"), Input("trade-dropdown", "value"))
+    def update_chart(idx: int) -> go.Figure:
+        trade_row = trade_rows[idx if idx is not None else 0]
+        day_bars = bars5.filter(pl.col("date") == trade_row["date"]).sort("DateTime")
+        return _build_figure(day_bars, trade_row)
 
     logger.info(f"Starting browser at http://localhost:{port}")
     app.run(debug=False, port=port)
