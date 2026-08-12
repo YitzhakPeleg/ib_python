@@ -1,7 +1,7 @@
 """Data models for IB historical data fetching."""
 
 from enum import StrEnum
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, PositiveInt
 
@@ -10,6 +10,7 @@ class SecurityType(StrEnum):
     STOCK = "STK"
     OPTION = "OPT"
     FUTURE = "FUT"
+    CONTINUOUS_FUTURE = "CONTFUT"
 
 
 class Exchange(StrEnum):
@@ -17,6 +18,9 @@ class Exchange(StrEnum):
     NASDAQ = "NASDAQ"
     ARCA = "ARCA"
     SMART = "SMART"
+    CME = "CME"
+    CBOT = "CBOT"
+    EUREX = "EUREX"
 
 
 class Currency(StrEnum):
@@ -66,4 +70,13 @@ class ContractSpec(BaseModel):
     )
     currency: Currency = Field(
         default=Currency.USD, description="Currency (e.g., 'USD', 'EUR')"
+    )
+    expiry: Optional[str] = Field(
+        default=None,
+        description=(
+            "Contract month/expiry, 'YYYYMM' or 'YYYYMMDD' — required for "
+            "SecurityType.FUTURE (an exact contract), ignored for "
+            "CONTINUOUS_FUTURE (IB resolves the front month automatically) "
+            "and STOCK/OPTION."
+        ),
     )

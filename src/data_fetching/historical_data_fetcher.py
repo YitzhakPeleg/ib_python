@@ -164,6 +164,8 @@ class HistoricalDataFetcher(IBapi):
         ib_contract.secType = contract.sec_type
         ib_contract.exchange = contract.exchange
         ib_contract.currency = contract.currency
+        if contract.expiry is not None:
+            ib_contract.lastTradeDateOrContractMonth = contract.expiry
 
         # Format dates for IB API (yyyymmdd HH:mm:ss UTC)
         end_datetime_str = end_date.strftime("%Y%m%d %H:%M:%S UTC")
@@ -246,7 +248,11 @@ class HistoricalDataFetcher(IBapi):
         # need different parsing or day+ bars silently end up with garbage
         # 1970-era timestamps (YYYYMMDD misread as a small epoch-seconds value).
         try:
-            if frequency in (BarFrequency.ONE_DAY, BarFrequency.ONE_WEEK, BarFrequency.ONE_MONTH):
+            if frequency in (
+                BarFrequency.ONE_DAY,
+                BarFrequency.ONE_WEEK,
+                BarFrequency.ONE_MONTH,
+            ):
                 df = df.with_columns(
                     pl.col("DateTime")
                     .cast(pl.Utf8)
