@@ -19,11 +19,14 @@ Everything here is exploratory research on one ticker's historical data, not
 a validated live-trading edge — see [Caveats](#caveats--whats-not-done-yet)
 before risking anything on it. That said, this config has now been through a
 real out-of-sample and cross-validation study (**[Appendix E](#appendix-e--out-of-sample-and-cross-validation-2018-2025)**),
-not just tuned once and reported: **the 30m / `range<ATR/2` / TP=SL=ATR/4-or-5
-/ multi-trade family is validated as a genuine, repeatedly-rediscovered signal
-across 5 of 8 tested years (2018, 2022-2025)** — but it reliably fails on 3
-specific years (2019-2021), and that failure mode is the main open problem,
-not overfitting to a single lucky sample.
+not just tuned once and reported: **the 30m / `range<ATR/2` / TP=SL=ATR
+(divisor 3-5) / multi-trade family is validated as a genuine,
+repeatedly-rediscovered signal across 5 of 8 tested years (2018,
+2022-2025)** — but it reliably fails on 3 specific years (2019-2021), and
+that failure mode is the main open problem, not overfitting to a single
+lucky sample. See Appendix E.5 for the honest, unhedged version of this
+conclusion, including why "just improve TP/SL sizing" likely isn't the
+whole fix.
 
 Engine: `src/algo/range_breakout.py` (`run_breakout_backtest`). Shared
 ATR/session-walk infrastructure: `src/algo/hammer_reversal.py`. Visual
@@ -513,13 +516,21 @@ each year's best-fit config against every other year.
 
 **Two findings stand out:**
 
-1. **Independent convergence.** 2018's fit and 2023's fit landed on the
-   *identical* config (30m/`<ATR/2`/ATR-4/multi) despite being optimized
-   from completely non-overlapping data. 2024's and 2025's fits independently
-   converged on another identical config (ATR-5 instead of ATR-4). Two
-   separate pairs of years, fit completely independently, agreeing with each
-   other — that's a materially stronger signal than any single backtest
-   number.
+1. **Independent convergence on a family, not one exact number.** 2018's fit
+   and 2023's fit landed on the identical config (30m/`<ATR/2`/ATR-4/multi);
+   2024's and 2025's fits independently converged on another identical
+   config (ATR-5 instead of ATR-4). But look at the full sequence across all
+   four multi-trade years: 2022→ATR/3, 2023→ATR/4, 2024→ATR/5, 2025→ATR/5 —
+   the divisor **drifts upward year over year**, it doesn't lock onto one
+   value. What's genuinely stable is the family — 30m, `range<ATR/2`,
+   multi-trade, divisor somewhere in 3-5 — not a single precise divisor.
+   That's still real, non-overfit evidence, but it's evidence for a band,
+   not for "ATR/4 or ATR/5" as two specially-privileged numbers. Also worth
+   weighing: the search grid itself was only 32 combos with 4 divisor
+   choices, so two years agreeing on the best-of-32 is a meaningfully likely
+   outcome once 30m/`<ATR/2`/multi is already the dominant pattern in the
+   grid — good corroborating evidence, not as statistically striking as
+   "agreement out of a huge search space" would be.
 
 2. **A clean regime split, and it isn't simply "before/after 2022."** Both
    robust config families (ATR-4 and ATR-5) are **net positive on 2018,
@@ -538,24 +549,54 @@ each year's best-fit config against every other year.
 
 ### E.5 Conclusion
 
-**30m opening range, `range < ATR/2`, TP=SL=ATR/4-or-5, multi-trade is a
-validated, good baseline choice** — not a single lucky fit, but a config
-independently rediscovered by fitting on four different individual years,
-that transfers cleanly across five of the eight years tested (2018,
-2022-2025) including a non-adjacent year. This is meaningfully stronger
-evidence than a single in-sample backtest, and rules out pure overfitting
-as the explanation for the original 2022-2026 result.
+**30m opening range, `range < ATR/2`, TP=SL=ATR in the 3-5 range,
+multi-trade is a validated, good baseline choice** — not a single lucky
+fit, but a config family independently rediscovered by fitting on four
+different individual years, that transfers cleanly across five of the
+eight years tested (2018, 2022-2025) including a non-adjacent year. This
+is meaningfully stronger evidence than a single in-sample backtest, and
+rules out pure overfitting as the explanation for the original 2022-2026
+result — with the caveat that the divisor itself drifts within that band
+rather than landing on one fixed number (see the convergence finding
+above), and that the search grid
+was narrow enough that this shouldn't be read as overwhelming statistical
+proof, just real corroborating evidence.
 
 The open problem is **2019-2021**, where nothing in the parameter space
-tested has any edge — including each year's own best direct fit. Since the
-fixed 14-day-trailing-ATR-scaled TP/SL is the one thing common to every
-config tried, and E.1 already showed it specifically mis-sizes trades during
-a fast volatility-regime shift (2020's COVID crash), **the most promising
-next step is a better/adaptive way to set TP and SL** — e.g. a faster- or
-regime-aware volatility estimate, a floor/ceiling on the ATR value used, or
-detecting when trailing ATR is likely stale — rather than further tuning the
-existing fixed-divisor knobs, which this appendix shows are already close to
-as good as that family of rule can get.
+tested has any edge — including each year's own best direct fit. The fixed
+14-day-trailing-ATR-scaled TP/SL is the one thing common to every config
+tried, and it's tempting to conclude "better TP/SL sizing" is therefore the
+whole fix — but that story only cleanly explains **2020**: E.1 showed
+trailing ATR specifically lags and mis-sizes trades during a fast
+volatility-regime *shift* (the COVID crash). It explains **2019 and 2021**
+much less well — both were calm, gradually-grinding melt-up years with no
+sudden regime shift, exactly the condition where a 14-day trailing ATR
+should track well, not lag. That points to two distinct problems wearing
+one label, worth testing as separate, parallel hypotheses rather than
+assuming one fix covers both:
+
+1. **Adaptive/regime-aware TP-SL sizing** — a faster-reacting or
+   regime-aware volatility estimate, a floor/ceiling on the ATR value used,
+   or explicit detection of a stale trailing ATR. Most likely to help
+   2020-style volatility-shock years specifically.
+2. **A volatility-regime *gate*, separate from sizing** — a pre-trade check
+   that skips trading entirely under certain conditions (e.g. a
+   persistently low, non-expanding volatility regime), rather than trying
+   to size TP/SL correctly for a setup that may just not have real
+   continuation behavior in a low-vol grind. Aimed at the 2019/2021-style
+   failure mode, which adaptive sizing alone may not fix.
+
+Both are more promising than further tuning the existing fixed-divisor
+knobs, which this appendix shows are already close to as good as that
+family of rule can get.
+
+One more thing worth weighing before leaning on the "validated" framing in
+a live-trading sense: **none of this appendix (or the document as a whole)
+models transaction costs.** Multi-trade mode fills 2-3 times on many
+trading days, and several of the per-trade mean-R edges found here are
+small (+0.02 to +0.08) — real slippage and commissions could erode a
+meaningful fraction of that before any TP/SL improvement is even
+considered.
 
 ---
 
@@ -567,29 +608,40 @@ as good as that family of rule can get.
   two reliably negative) — the current final config has not been re-run
   across the full ticker universe.
 - **~~No out-of-sample validation~~ — now done, see Appendix E.** The
-  30m/`<ATR/2`/ATR-4-or-5/multi family was independently rediscovered by
-  fitting on 4 different individual years and validated net-positive on 5 of
-  8 years tested (2018, 2022-2025) via a full leave-one-year-out
-  cross-validation. This is real evidence against pure overfitting — but it
-  also surfaced a real, unresolved failure mode (next bullet), not a clean
-  bill of health.
+  30m/`<ATR/2`/multi family (divisor drifting 3-5 across fit years, not one
+  fixed number) was independently rediscovered by fitting on 4 different
+  individual years and validated net-positive on 5 of 8 years tested (2018,
+  2022-2025) via a full leave-one-year-out cross-validation. This is real
+  evidence against pure overfitting — but it also surfaced a real,
+  unresolved failure mode (next bullet), not a clean bill of health.
 - **2019-2021 is an open problem, not just a caveat.** No config in the
   32-combo search space — including each of those years' own best direct
   fit — found any edge in 2019, 2020, or 2021. The fixed 14-day-trailing-ATR
-  TP/SL sizing is the common thread across every config tried and is the
-  leading suspect (it demonstrably mis-sizes trades during a fast
-  volatility-regime shift like 2020's COVID crash — see Appendix E.1). Per
-  Appendix E.5, **the most promising next step is a better/adaptive way to
-  set TP and SL**, not further tuning of the existing fixed-divisor knobs.
+  TP/SL sizing is the common thread across every config tried, but it's only
+  a clean explanation for **2020** (it demonstrably mis-sizes trades during a
+  fast volatility-regime shift like the COVID crash — Appendix E.1). It
+  explains **2019 and 2021** poorly — both were calm, gradually-grinding
+  years with no regime shift, exactly the condition a trailing ATR should
+  handle fine. Per Appendix E.5, this looks like two distinct problems, not
+  one: (a) sizing that lags a volatility shock, fixable with adaptive TP/SL,
+  and (b) the breakout-continuation premise possibly just not holding in a
+  low-vol grind at all, which better sizing wouldn't fix — likely needs a
+  separate regime *gate*, not a resize.
 - **No transaction costs, slippage, or spread.** All P&L is gross, 1
-  share/contract, fills assumed exactly at signal prices.
+  share/contract, fills assumed exactly at signal prices — worth weighing
+  seriously here specifically, since multi-trade mode fills 2-3 times on
+  many days and several of the validated mean-R edges are small (+0.02 to
+  +0.08 per trade); real costs could erode a meaningful share of that before
+  any TP/SL work even starts.
 - **Gap-fade refinement (Appendix B) not yet folded into the live rule** —
   promising, but untested as an actual pre-trade filter.
 - **Data now available for further work:** `data/SPY_full_1_min.parquet`
   (2018-01-02 → 2026-05-01, merged from three separate IB fetches) covers
   the full 8-year span used in Appendix E and can be reused directly for any
   further cross-validation or regime-detection work.
-- **Natural next steps**, roughly in priority order: (1) design and test an
-  adaptive/regime-aware TP-SL sizing scheme (Appendix E.5), (2) run the
-  validated config across all 8 tickers, (3) implement the gap-fade filter
+- **Natural next steps**, roughly in priority order: (1) design and test
+  adaptive/regime-aware TP-SL sizing *and*, separately, a volatility-regime
+  gate (Appendix E.5) — treat these as two hypotheses, not one fix, (2) model
+  transaction costs before trusting the small-mean-R years, (3) run the
+  validated config across all 8 tickers, (4) implement the gap-fade filter
   (Appendix B) as a real `run_breakout_backtest` parameter and re-validate.
