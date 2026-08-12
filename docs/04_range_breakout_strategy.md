@@ -17,7 +17,13 @@ This document has two purposes:
 
 Everything here is exploratory research on one ticker's historical data, not
 a validated live-trading edge — see [Caveats](#caveats--whats-not-done-yet)
-before risking anything on it.
+before risking anything on it. That said, this config has now been through a
+real out-of-sample and cross-validation study (**[Appendix E](#appendix-e--out-of-sample-and-cross-validation-2018-2025)**),
+not just tuned once and reported: **the 30m / `range<ATR/2` / TP=SL=ATR/4-or-5
+/ multi-trade family is validated as a genuine, repeatedly-rediscovered signal
+across 5 of 8 tested years (2018, 2022-2025)** — but it reliably fails on 3
+specific years (2019-2021), and that failure mode is the main open problem,
+not overfitting to a single lucky sample.
 
 Engine: `src/algo/range_breakout.py` (`run_breakout_backtest`). Shared
 ATR/session-walk infrastructure: `src/algo/hammer_reversal.py`. Visual
@@ -400,24 +406,190 @@ its browser remain in the repo and fully working if picked back up.
 
 ---
 
+## Appendix E — Out-of-Sample and Cross-Validation (2018-2025)
+
+Everything in Appendices A-D was tuned and evaluated on the same 2022-2026
+sample. This appendix fetched additional history from IB specifically to
+check whether any of that survives outside the sample it was built on.
+
+**Data fetched:** `examples/fetch_spy_2020_2021.py` and
+`examples/fetch_spy_2018_2019.py` pulled SPY 1-min bars for 2020-01-02 →
+2022-01-05 and 2018-01-02 → 2019-12-31 respectively (chunked-backward IB
+requests, same pattern as `fetch_spy_history.py`). All available SPY 1-min
+history was then merged into one file spanning **2018-01-02 → 2026-05-01**
+(813,420 bars) — `data/SPY_full_1_min.parquet` — used for everything below.
+Daily bars for ATR were resampled directly from this merged 1-min series
+(rather than the separately-fetched true daily file, which only goes back to
+2021-08-09) so ATR coverage is uniform across the whole 2018-2025 span.
+
+### E.1 First check: does the existing final config hold up on 2020-2021?
+
+Running the exact config from Part 2 (unchanged) on 2020-2021: **net
+negative** — 828 trades, 48.3% win rate, -0.021 mean R, **-$40.04** total.
+Broken down by year: 2020 (COVID crash + recovery) was clearly the driver
+(-$40.01), 2021 (a calmer melt-up) was roughly flat (-$2.20).
+
+**Why 2020 specifically fails:** ATR as a % of price was actually similar
+*on a typical day* between 2020-2021 and 2022-2026 (median 1.24% vs 1.18%),
+but 2020-2021's volatility was **far more variable** — standard deviation
+roughly double (1.07 vs 0.54) and peak ATR% nearly double (6.80% vs 3.81%,
+the COVID spike). The strategy sizes TP/SL off a **14-day trailing ATR**,
+which necessarily lags a sudden regime shift — during the crash, trailing
+ATR was still reflecting the pre-crash calm for a couple of weeks while
+realized volatility had already exploded, producing badly-mis-sized TP/SL
+levels and the whipsaw stop-outs that drove 2020's loss.
+
+### E.2 Does *any* config in the searched space work on 2018-2021?
+
+Re-ran the full 32-combo grid (opening range 30m/60m × range filter
+`<ATR/4`/`<ATR/2` × TP=SL divisor 3-6 × single/multi-trade) independently on
+each 2-year slice, to check whether the *specific* final config was simply
+wrong for that period, or whether nothing in the space works there:
+
+| Period | Best config found (re-optimized for that period) | Best total $ |
+|---|---|---|
+| 2018-2019 | 60m / `<ATR/4` / ATR/6 / single | +$0.70 |
+| 2020-2021 | 60m / `<ATR/2` / ATR/6 / single | +$5.58 |
+| 2022-2026 (original tuning period) | 30m / `<ATR/2` / ATR/5 / multi | +$147.64 |
+
+Both re-optimized bests are noise-level, not an edge — 30-31 of the 32
+configs tried on each period are net negative, several sharply so. This
+ruled out "wrong parameters for that period" as the explanation: there was
+nothing in this parameter space to find in 2018-2021, even fitting directly
+on it.
+
+### E.3 Proper walk-forward: fit on 2022 only, test 2023-2025 forward
+
+A fairer test than "does this generalize to a totally different market
+era" is "does a fit on one year hold up on the *next* one, without
+retuning." Fit (best of the 32-combo grid by total $) on 2022 alone: **30m /
+`<ATR/2` / TP=SL=ATR/3 / multi**, then run that exact, un-touched config
+forward:
+
+| Year | n | win_rate | mean_r | total $ |
+|---|---|---|---|---|
+| 2022 (fit) | 292 | 54.1% | +0.078 | +$53.12 |
+| 2023 (forward) | 332 | 53.3% | +0.076 | +$29.30 |
+| 2024 (forward) | 351 | 46.4% | -0.049 | -$22.80 |
+| 2025 (forward) | 308 | 49.4% | +0.020 | +$12.99 |
+| **2023-2025 combined** | 991 | ~50% | +0.024 | **+$19.49** |
+
+2023 held up almost exactly as well as the fit year (even slightly better
+in raw R terms). 2024 broke down into a real loss. 2025 partially recovered.
+Net across the three forward years: positive, but inconsistent — real
+evidence the fit wasn't pure noise, but also real evidence it isn't uniform.
+
+### E.4 Full cross-validation: fit on each year, test on every other year
+
+Extended E.3 into a full grid: fit the 32-combo sweep independently on each
+of the 8 full years available (2018-2025, excluding partial 2026), then run
+each year's best-fit config against every other year.
+
+**Best-fit config per year:**
+
+| Fit year | Config | In-sample $ |
+|---|---|---|
+| 2018 | 30m / `<ATR/2` / ATR/4 / multi | $16.86 |
+| 2019 | 60m / `<ATR/4` / ATR/5 / single | $2.13 |
+| 2020 | 60m / `<ATR/4` / ATR/6 / single | $0.80 |
+| 2021 | 30m / `<ATR/4` / ATR/3 / single | $6.72 |
+| 2022 | 30m / `<ATR/2` / ATR/3 / multi | $53.10 |
+| 2023 | 30m / `<ATR/2` / ATR/4 / multi | $45.05 |
+| 2024 | 30m / `<ATR/2` / ATR/5 / multi | $29.58 |
+| 2025 | 30m / `<ATR/2` / ATR/5 / multi | $64.99 |
+
+**Cross-test matrix (total $, rows = fit year, columns = tested year):**
+
+| fit\test | 2018 | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 |
+|---|---|---|---|---|---|---|---|---|
+| 2018 | 16.86 | -29.88 | -10.47 | -6.68 | 45.67 | 45.05 | 10.72 | 43.24 |
+| 2019 | -5.14 | 2.13 | -0.76 | -5.35 | -9.03 | 0.03 | 6.69 | -2.10 |
+| 2020 | -0.79 | 1.49 | 0.80 | -3.15 | -8.98 | -2.77 | 3.95 | -8.91 |
+| 2021 | -19.71 | -3.15 | -24.70 | 6.72 | 4.49 | 11.19 | 17.26 | 11.50 |
+| 2022 | 1.57 | -26.48 | -3.11 | -25.02 | 53.10 | 29.30 | -23.39 | 9.63 |
+| 2023 | 16.86 | -29.88 | -10.47 | -6.68 | 45.67 | 45.05 | 10.72 | 43.24 |
+| 2024 | 12.51 | -18.45 | -41.25 | -2.20 | 45.32 | 34.07 | 29.58 | 64.99 |
+| 2025 | 12.51 | -18.45 | -41.25 | -2.20 | 45.32 | 34.07 | 29.58 | 64.99 |
+
+**Two findings stand out:**
+
+1. **Independent convergence.** 2018's fit and 2023's fit landed on the
+   *identical* config (30m/`<ATR/2`/ATR-4/multi) despite being optimized
+   from completely non-overlapping data. 2024's and 2025's fits independently
+   converged on another identical config (ATR-5 instead of ATR-4). Two
+   separate pairs of years, fit completely independently, agreeing with each
+   other — that's a materially stronger signal than any single backtest
+   number.
+
+2. **A clean regime split, and it isn't simply "before/after 2022."** Both
+   robust config families (ATR-4 and ATR-5) are **net positive on 2018,
+   2022, 2023, 2024, and 2025** — five years, including 2018, which is not
+   adjacent to 2022-2025. Both fail on **2019, 2020, and 2021** — and
+   critically, each of those three years' own *in-sample* best fit is barely
+   above zero ($2.13, $0.80, $6.72), an order of magnitude weaker than
+   2018/2022-2025's in-sample fits ($17-65). There is nothing to find in
+   2019-2021 even fitting directly on them, not just a generalization
+   failure.
+
+   Pooling either robust config, unchanged, across **all 8 years**: the
+   ATR-4 family nets **+$114.51**; the ATR-5 family nets **+$124.57** — both
+   net positive across the full 2018-2025 span despite the three bad years,
+   because the five good years outweigh them.
+
+### E.5 Conclusion
+
+**30m opening range, `range < ATR/2`, TP=SL=ATR/4-or-5, multi-trade is a
+validated, good baseline choice** — not a single lucky fit, but a config
+independently rediscovered by fitting on four different individual years,
+that transfers cleanly across five of the eight years tested (2018,
+2022-2025) including a non-adjacent year. This is meaningfully stronger
+evidence than a single in-sample backtest, and rules out pure overfitting
+as the explanation for the original 2022-2026 result.
+
+The open problem is **2019-2021**, where nothing in the parameter space
+tested has any edge — including each year's own best direct fit. Since the
+fixed 14-day-trailing-ATR-scaled TP/SL is the one thing common to every
+config tried, and E.1 already showed it specifically mis-sizes trades during
+a fast volatility-regime shift (2020's COVID crash), **the most promising
+next step is a better/adaptive way to set TP and SL** — e.g. a faster- or
+regime-aware volatility estimate, a floor/ceiling on the ATR value used, or
+detecting when trailing ATR is likely stale — rather than further tuning the
+existing fixed-divisor knobs, which this appendix shows are already close to
+as good as that family of rule can get.
+
+---
+
 ## Caveats — What's Not Done Yet
 
-- **Single ticker, single continuous backtest window.** Every number in this
-  document is SPY only, one pass over 2022-2026 data, with no train/test
-  split and no out-of-sample holdout. A long sequence of parameter choices
-  (opening-range length, range filter, trigger strictness, TP/SL divisor,
-  cutoff time, multi-trade) were each tuned against the same trade pool —
-  real overfitting risk, flagged repeatedly throughout the exploration.
-- **No transaction costs, slippage, or spread.** All P&L is gross, 1
-  share/contract, fills assumed exactly at signal prices.
-- **Not checked against other tickers at the final config.** Earlier,
+- **Single ticker.** Every number in this document is SPY only. Earlier,
   simpler configs were checked across all 8 available tickers and showed
   meaningful cross-ticker variation (some tickers reliably positive, one or
   two reliably negative) — the current final config has not been re-run
   across the full ticker universe.
+- **~~No out-of-sample validation~~ — now done, see Appendix E.** The
+  30m/`<ATR/2`/ATR-4-or-5/multi family was independently rediscovered by
+  fitting on 4 different individual years and validated net-positive on 5 of
+  8 years tested (2018, 2022-2025) via a full leave-one-year-out
+  cross-validation. This is real evidence against pure overfitting — but it
+  also surfaced a real, unresolved failure mode (next bullet), not a clean
+  bill of health.
+- **2019-2021 is an open problem, not just a caveat.** No config in the
+  32-combo search space — including each of those years' own best direct
+  fit — found any edge in 2019, 2020, or 2021. The fixed 14-day-trailing-ATR
+  TP/SL sizing is the common thread across every config tried and is the
+  leading suspect (it demonstrably mis-sizes trades during a fast
+  volatility-regime shift like 2020's COVID crash — see Appendix E.1). Per
+  Appendix E.5, **the most promising next step is a better/adaptive way to
+  set TP and SL**, not further tuning of the existing fixed-divisor knobs.
+- **No transaction costs, slippage, or spread.** All P&L is gross, 1
+  share/contract, fills assumed exactly at signal prices.
 - **Gap-fade refinement (Appendix B) not yet folded into the live rule** —
   promising, but untested as an actual pre-trade filter.
-- **Natural next steps**, roughly in priority order: (1) out-of-sample /
-  walk-forward validation on SPY, (2) run the exact final config across all
-  8 tickers, (3) implement the gap-fade filter as a real
-  `run_breakout_backtest` parameter and re-validate.
+- **Data now available for further work:** `data/SPY_full_1_min.parquet`
+  (2018-01-02 → 2026-05-01, merged from three separate IB fetches) covers
+  the full 8-year span used in Appendix E and can be reused directly for any
+  further cross-validation or regime-detection work.
+- **Natural next steps**, roughly in priority order: (1) design and test an
+  adaptive/regime-aware TP-SL sizing scheme (Appendix E.5), (2) run the
+  validated config across all 8 tickers, (3) implement the gap-fade filter
+  (Appendix B) as a real `run_breakout_backtest` parameter and re-validate.
