@@ -2,16 +2,18 @@
 
 Config: 30-minute opening range, range < ATR/2 (no floor), trigger requires
 the whole bar (open AND close) outside the range, trading allowed until
-13:00, multi-trade/day, SL=ATR/4, TP=range-projection (same-day-reactive
-measured-move target — see Appendix E's follow-up experiment in
-docs/04_range_breakout_strategy.md), SPY, filtered to YEAR. See
-src/algo/range_breakout.py for the rule and
-examples/hammer_reversal_browser.py for the browser this mirrors.
+13:00, multi-trade/day, TP=SL=2x the trigger bar's own High-Low range (see
+the trigger-bar-multiple follow-up experiment in
+docs/04_range_breakout_strategy.md), SPY, filtered to YEAR. Signal/trigger
+bar size is SIGNAL_TIMEFRAME (currently 15m — see the signal-timeframe
+follow-up experiment in the same doc). See src/algo/range_breakout.py for
+the rule and examples/hammer_reversal_browser.py for the browser this
+mirrors.
 
 Launches a day-by-day Dash browser over every triggered trade, showing
-5-minute candles with the opening range shaded, the trigger bar marked with
-a directional triangle (up above the bar for a long, down below for a
-short), and SL/TP drawn.
+SIGNAL_TIMEFRAME candles with the opening range shaded, the trigger bar
+marked with a directional triangle (up above the bar for a long, down below
+for a short), and SL/TP drawn.
 """
 
 import argparse
@@ -28,12 +30,13 @@ from visualization.plotting import plot_bars
 
 TICKER = "SPY"
 DATA_LABEL = "SPY_full"  # merged 2018-01-02 -> 2026-05-01 file
-YEAR = 2018
+YEAR = 2019
 OHLCV = ["DateTime", "Open", "High", "Low", "Close", "Volume"]
 
 OPENING_RANGE_MINUTES = 30
 SIGNAL_WINDOW_MINUTES = 210  # trading allowed until 13:00 on a 9:30 open
-SL_ATR_DIVISOR = 4.0
+SIGNAL_TIMEFRAME = "15m"
+TP_SL_TRIGGER_BAR_MULTIPLE = 2.0
 
 
 def load_trades() -> tuple[pl.DataFrame, pl.DataFrame]:
@@ -53,17 +56,17 @@ def load_trades() -> tuple[pl.DataFrame, pl.DataFrame]:
     trades = run_breakout_backtest(
         minute_bars,
         daily_bars,
+        signal_timeframe=SIGNAL_TIMEFRAME,
         opening_range_minutes=OPENING_RANGE_MINUTES,
         signal_window_minutes=SIGNAL_WINDOW_MINUTES,
         range_atr_low_divisor=None,
         range_atr_high_divisor=2.0,
-        sl_atr_divisor=SL_ATR_DIVISOR,
-        tp_range_projection=True,
+        tp_sl_trigger_bar_multiple=TP_SL_TRIGGER_BAR_MULTIPLE,
         require_open_outside=True,
         allow_multiple_trades_per_day=True,
     )
-    bars5 = resample_to_timeframe(minute_bars, "5m")
-    return trades, bars5
+    bars_signal = resample_to_timeframe(minute_bars, SIGNAL_TIMEFRAME)
+    return trades, bars_signal
 
 
 RESULT_LABELS = {"tp": "Take Profit", "sl": "Stop Loss", "eod": "End of Day"}
@@ -149,7 +152,7 @@ def _build_figure(day_bars: pl.DataFrame, trade_row: dict) -> go.Figure:
 
 
 def run(port: int = 8052) -> None:
-    trades, bars5 = load_trades()
+    trades, bars_signal = load_trades()
 
     out_path = f"output/hammer_reversal/spy_range_breakout_trades_{YEAR}.csv"
     trades.write_csv(out_path)
@@ -212,7 +215,9 @@ def run(port: int = 8052) -> None:
     @app.callback(Output("chart", "figure"), Input("trade-dropdown", "value"))
     def update_chart(idx: int) -> go.Figure:
         trade_row = trade_rows[idx if idx is not None else 0]
-        day_bars = bars5.filter(pl.col("date") == trade_row["date"]).sort("DateTime")
+        day_bars = bars_signal.filter(pl.col("date") == trade_row["date"]).sort(
+            "DateTime"
+        )
         return _build_figure(day_bars, trade_row)
 
     logger.info(f"Starting browser at http://localhost:{port}")

@@ -86,6 +86,8 @@ class BreakoutTrigger:
 
 def _find_breakout_trigger(
     open_: np.ndarray,
+    high: np.ndarray,
+    low: np.ndarray,
     close: np.ndarray,
     minutes_since_open: np.ndarray,
     or_high: float,
@@ -96,6 +98,8 @@ def _find_breakout_trigger(
     signal_window_minutes: int = SIGNAL_WINDOW_MINUTES,
     require_open_outside: bool = False,
     start_idx: int = 0,
+    tp_range_projection: bool = False,
+    tp_sl_trigger_bar_multiple: Optional[float] = None,
 ) -> Optional[BreakoutTrigger]:
     """First-signal-wins scan for a bar closing outside [or_low, or_high],
     starting no earlier than start_idx (used to resume scanning after a
@@ -106,10 +110,28 @@ def _find_breakout_trigger(
     already be outside the range (same side as the close) — the whole bar's
     body outside the range, not just a close that pokes through it.
 
-    tp_distance: TP sits this far from entry, in the trade's favor.
+    tp_distance: TP sits this far from entry, in the trade's favor. Ignored
+    if tp_range_projection or tp_sl_trigger_bar_multiple is set.
     sl_distance: if given, SL sits this far from entry, against the trade;
     if None, SL is the opposite edge of the opening range (or_low for a
-    long, or_high for a short) — the strategy's original rule.
+    long, or_high for a short) — the strategy's original rule. Ignored if
+    tp_sl_trigger_bar_multiple is set.
+
+    tp_range_projection, if set, overrides tp_distance entirely: TP is
+    placed the same distance beyond entry as entry itself sits from the
+    OPPOSITE edge of the opening range — i.e. mirror entry's distance to
+    the far edge, projected forward. Long: entry + (entry - or_low) =
+    2*entry - or_low. Short: entry - (or_high - entry) = 2*entry - or_high.
+    Same-day-reactive (scales with today's own realized range), unlike the
+    trailing-ATR-based tp_distance which only updates once per day from a
+    14-day-old average.
+
+    tp_sl_trigger_bar_multiple, if set, overrides BOTH tp_distance/
+    tp_range_projection and sl_distance: both TP and SL sit
+    tp_sl_trigger_bar_multiple * (the trigger bar's own High - Low) from
+    entry, symmetrically. The most local/reactive sizing tried yet — scales
+    with a single 5-min bar's own realized range rather than the 14-day
+    ATR or the 30-min opening range.
     """
     in_window = (
         (minutes_since_open >= opening_range_minutes)
@@ -119,12 +141,20 @@ def _find_breakout_trigger(
     for i in np.flatnonzero(in_window):
         if close[i] > or_high and (not require_open_outside or open_[i] > or_high):
             entry = close[i]
+            if tp_sl_trigger_bar_multiple is not None:
+                d = tp_sl_trigger_bar_multiple * (high[i] - low[i])
+                return BreakoutTrigger(i, 1, entry, entry - d, entry + d)
             sl = or_low if sl_distance is None else entry - sl_distance
-            return BreakoutTrigger(i, 1, entry, sl, entry + tp_distance)
+            tp = (2 * entry - or_low) if tp_range_projection else entry + tp_distance
+            return BreakoutTrigger(i, 1, entry, sl, tp)
         if close[i] < or_low and (not require_open_outside or open_[i] < or_low):
             entry = close[i]
+            if tp_sl_trigger_bar_multiple is not None:
+                d = tp_sl_trigger_bar_multiple * (high[i] - low[i])
+                return BreakoutTrigger(i, -1, entry, entry + d, entry - d)
             sl = or_high if sl_distance is None else entry + sl_distance
-            return BreakoutTrigger(i, -1, entry, sl, entry - tp_distance)
+            tp = (2 * entry - or_high) if tp_range_projection else entry - tp_distance
+            return BreakoutTrigger(i, -1, entry, sl, tp)
     return None
 
 
@@ -143,6 +173,8 @@ def run_breakout_backtest(
     sl_equals_tp: bool = False,
     require_open_outside: bool = False,
     allow_multiple_trades_per_day: bool = False,
+    tp_range_projection: bool = False,
+    tp_sl_trigger_bar_multiple: Optional[float] = None,
 ) -> pl.DataFrame:
     """minute_bars, daily_bars: multi-ticker OHLC (1-min and 1-day resp.),
     each with a `ticker` column, sorted by ticker/DateTime.
@@ -185,6 +217,13 @@ def run_breakout_backtest(
     signal_window_minutes) — sequential trades only, never overlapping
     positions, since the next scan can't start until the previous trade has
     already exited.
+
+    tp_range_projection: see _find_breakout_trigger — overrides tp_dollars/
+    tp_atr_divisor with a same-day-reactive measured-move target instead.
+
+    tp_sl_trigger_bar_multiple: see _find_breakout_trigger — overrides both
+    TP and SL sizing with a symmetric multiple of the trigger bar's own
+    High-Low range.
     """
     trades = []
     for ticker, date, or_high, or_low, atr_prior, day_signal in _iter_band_sessions(
@@ -218,6 +257,8 @@ def run_breakout_backtest(
         while True:
             trigger = _find_breakout_trigger(
                 open_,
+                high,
+                low,
                 close,
                 minutes_since_open,
                 or_high,
@@ -228,6 +269,8 @@ def run_breakout_backtest(
                 signal_window_minutes,
                 require_open_outside,
                 start_idx,
+                tp_range_projection,
+                tp_sl_trigger_bar_multiple,
             )
             if trigger is None:
                 break
