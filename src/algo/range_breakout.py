@@ -100,6 +100,9 @@ def _find_breakout_trigger(
     start_idx: int = 0,
     tp_range_projection: bool = False,
     tp_sl_trigger_bar_multiple: Optional[float] = None,
+    atr_prior: Optional[float] = None,
+    sl_at_trigger_extreme: bool = False,
+    tp_bar_multiple: Optional[float] = None,
 ) -> Optional[BreakoutTrigger]:
     """First-signal-wins scan for a bar closing outside [or_low, or_high],
     starting no earlier than start_idx (used to resume scanning after a
@@ -132,6 +135,28 @@ def _find_breakout_trigger(
     entry, symmetrically. The most local/reactive sizing tried yet — scales
     with a single 5-min bar's own realized range rather than the 14-day
     ATR or the 30-min opening range.
+
+    atr_prior, if given, adds a sanity filter applied to whichever TP was
+    resolved above (any mode): a candidate is skipped (scanning continues
+    for a later bar) if reaching TP would require the FULL day's range —
+    measured from the OPPOSITE edge of the opening range, not from entry —
+    to exceed the day's own ATR. E.g. or_low=10, ATR=2: a long's TP > 12
+    is skipped, since or_low to TP is already a bigger move than a typical
+    full day (ATR) makes plausible. Mirror for shorts: TP < or_high - ATR
+    is skipped. This is a plausibility check on the TP level itself, not a
+    comparison of the SL/TP *distance* to ATR.
+
+    sl_at_trigger_extreme + tp_bar_multiple: a third sizing mode, checked
+    before tp_sl_trigger_bar_multiple. SL is the trigger bar's own extreme
+    (low for a long, high for a short — NOT scaled, an exact anchor, unlike
+    every other SL rule here). TP is entry +/- tp_bar_multiple * (the
+    trigger bar's own High - Low). Since entry is that bar's CLOSE (which
+    can sit inside a wick, not at the extreme), the resulting SL distance
+    is generally smaller than the bar's full range, while TP is scaled off
+    the full range — an intentionally asymmetric reward:risk, unlike
+    tp_sl_trigger_bar_multiple's symmetric one. A candidate bar that closed
+    exactly at its own extreme (entry == sl, zero risk) is skipped rather
+    than returned, since that's a degenerate trade, not a real signal.
     """
     in_window = (
         (minutes_since_open >= opening_range_minutes)
@@ -141,19 +166,41 @@ def _find_breakout_trigger(
     for i in np.flatnonzero(in_window):
         if close[i] > or_high and (not require_open_outside or open_[i] > or_high):
             entry = close[i]
-            if tp_sl_trigger_bar_multiple is not None:
+            if sl_at_trigger_extreme and tp_bar_multiple is not None:
+                if entry <= low[i]:  # entry closed at its own low: zero risk, skip
+                    continue
+                sl = low[i]
+                tp = entry + tp_bar_multiple * (high[i] - low[i])
+            elif tp_sl_trigger_bar_multiple is not None:
                 d = tp_sl_trigger_bar_multiple * (high[i] - low[i])
-                return BreakoutTrigger(i, 1, entry, entry - d, entry + d)
-            sl = or_low if sl_distance is None else entry - sl_distance
-            tp = (2 * entry - or_low) if tp_range_projection else entry + tp_distance
+                sl, tp = entry - d, entry + d
+            else:
+                sl = or_low if sl_distance is None else entry - sl_distance
+                tp = (
+                    (2 * entry - or_low) if tp_range_projection else entry + tp_distance
+                )
+            if atr_prior is not None and tp > or_low + atr_prior:
+                continue
             return BreakoutTrigger(i, 1, entry, sl, tp)
         if close[i] < or_low and (not require_open_outside or open_[i] < or_low):
             entry = close[i]
-            if tp_sl_trigger_bar_multiple is not None:
+            if sl_at_trigger_extreme and tp_bar_multiple is not None:
+                if entry >= high[i]:  # entry closed at its own high: zero risk, skip
+                    continue
+                sl = high[i]
+                tp = entry - tp_bar_multiple * (high[i] - low[i])
+            elif tp_sl_trigger_bar_multiple is not None:
                 d = tp_sl_trigger_bar_multiple * (high[i] - low[i])
-                return BreakoutTrigger(i, -1, entry, entry + d, entry - d)
-            sl = or_high if sl_distance is None else entry + sl_distance
-            tp = (2 * entry - or_high) if tp_range_projection else entry - tp_distance
+                sl, tp = entry + d, entry - d
+            else:
+                sl = or_high if sl_distance is None else entry + sl_distance
+                tp = (
+                    (2 * entry - or_high)
+                    if tp_range_projection
+                    else entry - tp_distance
+                )
+            if atr_prior is not None and tp < or_high - atr_prior:
+                continue
             return BreakoutTrigger(i, -1, entry, sl, tp)
     return None
 
@@ -175,6 +222,9 @@ def run_breakout_backtest(
     allow_multiple_trades_per_day: bool = False,
     tp_range_projection: bool = False,
     tp_sl_trigger_bar_multiple: Optional[float] = None,
+    skip_if_tp_exceeds_atr: bool = False,
+    sl_at_trigger_extreme: bool = False,
+    tp_bar_multiple: Optional[float] = None,
 ) -> pl.DataFrame:
     """minute_bars, daily_bars: multi-ticker OHLC (1-min and 1-day resp.),
     each with a `ticker` column, sorted by ticker/DateTime.
@@ -224,6 +274,15 @@ def run_breakout_backtest(
     tp_sl_trigger_bar_multiple: see _find_breakout_trigger — overrides both
     TP and SL sizing with a symmetric multiple of the trigger bar's own
     High-Low range.
+
+    skip_if_tp_exceeds_atr: see _find_breakout_trigger's atr_prior param —
+    applies to whichever TP mode is active; skips a candidate whose TP
+    would require more than one ATR's worth of range from the opposite
+    edge of the opening range, instead of taking it.
+
+    sl_at_trigger_extreme + tp_bar_multiple: see _find_breakout_trigger —
+    a third sizing mode: SL is the trigger bar's own extreme (not scaled),
+    TP is tp_bar_multiple * the trigger bar's own range from entry.
     """
     trades = []
     for ticker, date, or_high, or_low, atr_prior, day_signal in _iter_band_sessions(
@@ -271,6 +330,9 @@ def run_breakout_backtest(
                 start_idx,
                 tp_range_projection,
                 tp_sl_trigger_bar_multiple,
+                atr_prior if skip_if_tp_exceeds_atr else None,
+                sl_at_trigger_extreme,
+                tp_bar_multiple,
             )
             if trigger is None:
                 break
@@ -289,6 +351,7 @@ def run_breakout_backtest(
             trade["trigger_time"] = day_signal["DateTime"][int(trigger.trigger_idx)]
             trade["or_high"] = or_high
             trade["or_low"] = or_low
+            trade["atr_prior"] = atr_prior
             trades.append(trade)
 
             if not allow_multiple_trades_per_day:

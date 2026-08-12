@@ -2,13 +2,12 @@
 
 Config: 30-minute opening range, range < ATR/2 (no floor), trigger requires
 the whole bar (open AND close) outside the range, trading allowed until
-13:00, multi-trade/day, TP=SL=2x the trigger bar's own High-Low range (see
-the trigger-bar-multiple follow-up experiment in
-docs/04_range_breakout_strategy.md), SPY, filtered to YEAR. Signal/trigger
-bar size is SIGNAL_TIMEFRAME (currently 15m — see the signal-timeframe
-follow-up experiment in the same doc). See src/algo/range_breakout.py for
-the rule and examples/hammer_reversal_browser.py for the browser this
-mirrors.
+13:00, multi-trade/day, SL=the trigger bar's own extreme (low for a long,
+high for a short — not scaled), TP=TP_BAR_MULTIPLE x the trigger bar's own
+High-Low range (see the sl_at_trigger_extreme follow-up experiment in
+docs/04_range_breakout_strategy.md), SPY, filtered to YEAR. See
+src/algo/range_breakout.py for the rule and
+examples/hammer_reversal_browser.py for the browser this mirrors.
 
 Launches a day-by-day Dash browser over every triggered trade, showing
 SIGNAL_TIMEFRAME candles with the opening range shaded, the trigger bar
@@ -35,8 +34,8 @@ OHLCV = ["DateTime", "Open", "High", "Low", "Close", "Volume"]
 
 OPENING_RANGE_MINUTES = 30
 SIGNAL_WINDOW_MINUTES = 210  # trading allowed until 13:00 on a 9:30 open
-SIGNAL_TIMEFRAME = "15m"
-TP_SL_TRIGGER_BAR_MULTIPLE = 2.0
+SIGNAL_TIMEFRAME = "5m"
+TP_BAR_MULTIPLE = 1.5
 
 
 def load_trades() -> tuple[pl.DataFrame, pl.DataFrame]:
@@ -61,7 +60,8 @@ def load_trades() -> tuple[pl.DataFrame, pl.DataFrame]:
         signal_window_minutes=SIGNAL_WINDOW_MINUTES,
         range_atr_low_divisor=None,
         range_atr_high_divisor=2.0,
-        tp_sl_trigger_bar_multiple=TP_SL_TRIGGER_BAR_MULTIPLE,
+        sl_at_trigger_extreme=True,
+        tp_bar_multiple=TP_BAR_MULTIPLE,
         require_open_outside=True,
         allow_multiple_trades_per_day=True,
     )
@@ -82,6 +82,7 @@ def _build_figure(day_bars: pl.DataFrame, trade_row: dict) -> go.Figure:
     title = (
         f"{TICKER} — {trade_row['date']} ({direction})  |  "
         f"range=[{or_low:.2f}, {or_high:.2f}] ({or_high - or_low:.2f})  |  "
+        f"ATR={trade_row['atr_prior']:.2f}  |  "
         f"Result: {result_label}  |  P&L: {pnl_dollars:+.2f} $ (r={trade_row['r_multiple']:.2f})"
     )
     fig = plot_bars(
