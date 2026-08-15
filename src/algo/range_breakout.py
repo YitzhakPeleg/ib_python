@@ -198,6 +198,7 @@ def _find_breakout_trigger(
     opening_direction: Optional[int] = None,
     require_direction: Optional[str] = None,
     max_open_excess_atr_z: Optional[float] = None,
+    model_pred: Optional[tuple[float, float]] = None,
 ) -> Optional[BreakoutTrigger]:
     """First-signal-wins scan for a bar closing outside [or_low, or_high],
     starting no earlier than start_idx (used to resume scanning after a
@@ -308,6 +309,20 @@ def _find_breakout_trigger(
     forced to mirror that SL distance from entry (reward:risk 1:1),
     overriding tp_distance/tp_range_projection. A candidate whose entry
     already sits at the near edge (zero risk) is skipped.
+
+    model_pred, if given, is a fifth TP mode: (pred_high, pred_low) in
+    dollars, from src/ml -- a neural net trained to predict the REMAINDER
+    of the session's own high/low after exactly this same opening window
+    (see src/ml/dataset.py), from 14 days of prior history plus the
+    opening range's own bars. TP becomes that prediction directly (long:
+    pred_high, short: pred_low) instead of tp_distance/tp_range_projection.
+    SL is untouched -- still resolved by sl_distance/sl_atr_divisor/the
+    default opposite-range-edge rule, exactly as when model_pred is None --
+    so this isolates the TP-sizing question from everything else. A
+    candidate where the model predicts NO further room beyond entry (long:
+    pred_high <= entry, short: pred_low >= entry) is skipped rather than
+    taken with a non-positive target -- this doubles as a trade filter,
+    not just a sizing rule.
     """
     in_window = (
         (minutes_since_open >= opening_range_minutes)
@@ -355,6 +370,11 @@ def _find_breakout_trigger(
                 if entry <= sl:  # zero/negative risk, skip
                     continue
                 tp = entry + (entry - sl)
+            elif model_pred is not None:
+                sl = or_low if sl_distance is None else entry - sl_distance
+                tp = model_pred[0]
+                if tp <= entry:  # model predicts no further room: skip, not a signal
+                    continue
             else:
                 sl = or_low if sl_distance is None else entry - sl_distance
                 tp = (
@@ -397,6 +417,11 @@ def _find_breakout_trigger(
                 if entry >= sl:  # zero/negative risk, skip
                     continue
                 tp = entry - (sl - entry)
+            elif model_pred is not None:
+                sl = or_high if sl_distance is None else entry + sl_distance
+                tp = model_pred[1]
+                if tp >= entry:  # model predicts no further room: skip, not a signal
+                    continue
             else:
                 sl = or_high if sl_distance is None else entry + sl_distance
                 tp = (
@@ -436,6 +461,7 @@ def run_breakout_backtest(
     min_relative_volume: Optional[float] = None,
     require_direction: Optional[str] = None,
     max_open_excess_atr_z: Optional[float] = None,
+    tp_model_pred: Optional[dict[tuple[str, object], tuple[float, float]]] = None,
 ) -> pl.DataFrame:
     """minute_bars, daily_bars: multi-ticker OHLC (1-min and 1-day resp.),
     each with a `ticker` column, sorted by ticker/DateTime.
@@ -529,6 +555,13 @@ def run_breakout_backtest(
     already outside the range is only rejected if the open sits more than
     ATR/max_open_excess_atr_z beyond the edge; a bar whose open is inside
     the range, or only marginally outside it, still counts.
+
+    tp_model_pred: see _find_breakout_trigger — a dict {(ticker, date):
+    (pred_high_dollar, pred_low_dollar)} from a trained src/ml day-range
+    model, overriding TP sizing (SL untouched). A session whose (ticker,
+    date) isn't in the dict is skipped entirely (no prediction available —
+    e.g. outside the model's warm-up window or validation years), rather
+    than falling back to the default TP rule.
     """
     trades = []
     for (
@@ -549,6 +582,11 @@ def run_breakout_backtest(
         range_atr_high_divisor,
         min_relative_volume,
     ):
+        if tp_model_pred is not None and (ticker, date) not in tp_model_pred:
+            continue
+        model_pred = (
+            tp_model_pred[(ticker, date)] if tp_model_pred is not None else None
+        )
         session_open = day_signal["DateTime"][0]
         minutes_since_open = (
             (day_signal["DateTime"] - session_open).dt.total_minutes().to_numpy()
@@ -596,6 +634,7 @@ def run_breakout_backtest(
                 opening_direction,
                 require_direction,
                 max_open_excess_atr_z,
+                model_pred,
             )
             if trigger is None:
                 break
